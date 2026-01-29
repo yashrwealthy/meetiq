@@ -3,14 +3,27 @@ from __future__ import annotations
 import json
 import os
 import re
+import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+import logging
+
 from models.schemas import MeetingOutput
+logger = logging.getLogger(__name__)
+
+try:
+    from dotenv import load_dotenv  # type: ignore
+
+    load_dotenv()
+except Exception:
+    pass
 
 
 try:
     from google.adk.agents import Agent  # type: ignore
+    from google.adk.runners import InMemoryRunner  # type: ignore
+    from google.genai.types import Content, Part  # type: ignore
 
     _ADK_AVAILABLE = True
 except Exception:
@@ -31,14 +44,25 @@ class MeetingAgent:
     def __init__(self) -> None:
         self.instructions = (
             "You are a professional meeting intelligence assistant built for financial advisors. "
-            "Analyze the transcript ONLY if it is about regulated financial investment products "
-            "(Mutual Funds, SIP/Lumpsum, STP/SWP, Equity/Debt/Hybrid funds or similar). "
-            "If not related, return an empty but valid JSON with is_financial_meeting=false. "
-            "Do not hallucinate. Use only what is present in the transcript. "
-            "Return VALID JSON only with keys: is_financial_meeting, financial_products, "
-            "client_intent, meeting_summary, action_items, follow_up_date, confidence_level. "
-            "meeting_summary must be 3-5 bullets. follow_up_date must be YYYY-MM-DD or null. "
-            "confidence_level must be high, medium, or low. No markdown."
+            "Your job is to analyze a client-advisor conversation transcript and generate insights "
+            "ONLY if the conversation is related to: Mutual Funds, SIP/Lumpsum, STP/SWP, "
+            "Equity/Debt/Hybrid funds, or any regulated financial investment product. "
+            "If the transcript explicitly mentions mutual fund, SIP, STP, SWP, equity, debt, hybrid, "
+            "or fund, you MUST set is_financial_meeting=true and list those products. "
+            "IMPORTANT FILTER RULES: If NOT related, return an empty but valid JSON response. "
+            "Do NOT hallucinate financial intent. Use only what is explicitly or implicitly present. "
+            "TASKS: Identify financial products discussed, understand client intent, summarize the "
+            "conversation in advisor-friendly language, extract actionable next steps, and detect "
+            "follow-up timing if mentioned. OUTPUT RULES: Respond in VALID JSON only, no markdown, "
+            "no extra text. OUTPUT FORMAT: {"
+            "\"is_financial_meeting\":true|false,"
+            "\"financial_products\":[...],"
+            "\"client_intent\":\"...\","
+            "\"meeting_summary\":[...],"
+            "\"action_items\":[...],"
+            "\"follow_up_date\":\"YYYY-MM-DD\"|null,"
+            "\"confidence_level\":\"high|medium|low\""
+            "}. meeting_summary must be 3-5 bullets."
         )
         self.model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
         self.agent = Agent(
@@ -47,6 +71,7 @@ class MeetingAgent:
             description="Generate a concise meeting summary, action items, and follow-up date.",
             instruction=self.instructions,
             global_instruction=self.instructions,
+            output_schema=MeetingOutput,
             tools=[],
             sub_agents=[],
         )
@@ -60,9 +85,13 @@ class MeetingAgent:
         return self._normalize_output(parsed)
 
     async def _call_llm(self, transcript: str) -> str:
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            return json.dumps(self._heuristic_output(transcript))
+        use_vertex = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").lower() in {"1", "true", "yes"}
+        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if not use_vertex and not api_key:
+            return json.dumps(self._empty_payload())
+
+        if not use_vertex and os.getenv("GOOGLE_API_KEY") is None and api_key:
+            os.environ["GOOGLE_API_KEY"] = api_key
 
         prompt = (
             "Transcript:\n"
@@ -79,15 +108,31 @@ class MeetingAgent:
         )
 
         if not _ADK_AVAILABLE:
-            return json.dumps(self._heuristic_output(transcript))
+            return json.dumps(self._empty_payload())
 
         adk_result = await self._run_adk_agent(prompt)
         if adk_result:
             return adk_result
-        return json.dumps(self._heuristic_output(transcript))
+        return json.dumps(self._empty_payload())
 
     async def _run_adk_agent(self, prompt: str) -> str:
         try:
+            app_name = "meetiq"
+            user_id = "meetiq"
+            session_id = str(uuid.uuid4())
+            runner = InMemoryRunner(agent=self.agent, app_name=app_name)
+            runner.session_service.create_session_sync(
+                app_name=app_name,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            content = Content(role="user", parts=[Part(text=prompt)])
+            stream = runner.run_async(
+                user_id=user_id,
+                session_id=session_id,
+                new_message=content,
+            )
+            return await self._collect_adk_text(stream)
             if hasattr(self.agent, "arun"):
                 result = await self.agent.arun(prompt)  # type: ignore[attr-defined]
                 return self._extract_text(result)
@@ -98,8 +143,20 @@ class MeetingAgent:
                 maybe_result = self.agent.invoke(prompt)  # type: ignore[attr-defined]
                 return await self._maybe_await(maybe_result)
         except Exception:
+            logger.exception("ADK execution failed")
             return ""
         return ""
+
+    async def _collect_adk_text(self, stream: Any) -> str:
+        chunks: List[str] = []
+        async for event in stream:
+            content = getattr(event, "content", None)
+            if content and getattr(content, "parts", None):
+                for part in content.parts:
+                    text = getattr(part, "text", "")
+                    if text:
+                        chunks.append(text)
+        return "".join(chunks)
 
     async def _maybe_await(self, value: Any) -> str:
         if hasattr(value, "__await__"):
@@ -178,107 +235,15 @@ class MeetingAgent:
             confidence_level=confidence_level,
         )
 
-    def _heuristic_output(self, transcript: str) -> Dict[str, Any]:
-        lower = transcript.lower()
-        is_financial = any(
-            keyword in lower
-            for keyword in [
-                "mutual fund",
-                "sip",
-                "lumpsum",
-                "stp",
-                "swp",
-                "equity",
-                "debt",
-                "hybrid",
-                "fund",
-            ]
-        )
-
-        if not is_financial:
-            return {
-                "is_financial_meeting": False,
-                "financial_products": [],
-                "client_intent": "",
-                "meeting_summary": [],
-                "action_items": [],
-                "follow_up_date": None,
-                "confidence_level": "low",
-            }
-
-        products: List[str] = []
-        if "mutual fund" in lower or "mutual funds" in lower:
-            products.append("Mutual Fund")
-        if "sip" in lower:
-            products.append("SIP")
-        if "lumpsum" in lower or "lump sum" in lower:
-            products.append("Lumpsum")
-        if "stp" in lower:
-            products.append("STP")
-        if "swp" in lower:
-            products.append("SWP")
-        if "equity" in lower:
-            products.append("Equity Fund")
-        if "debt" in lower:
-            products.append("Debt Fund")
-        if "hybrid" in lower:
-            products.append("Hybrid Fund")
-
-        amount_match = re.search(r"(?:₹|rs\.?|inr)\s*(\d[\d,]*)", lower)
-        amount = amount_match.group(1) if amount_match else ""
-        if amount:
-            amount = amount.replace(",", "")
-        duration_match = re.search(r"(\d+)\s*(?:year|years|yr|yrs)", lower)
-        duration_years = duration_match.group(1) if duration_match else ""
-
-        intent = "Advisor discussed a financial investment option"
-        if "sip" in lower and "mutual fund" in lower:
-            intent = "Advisor explained a long-term SIP investment opportunity in mutual funds"
-        elif "sip" in lower:
-            intent = "Advisor discussed starting a SIP investment"
-        elif "mutual fund" in lower:
-            intent = "Advisor discussed a mutual fund investment option"
-
-        meeting_summary: List[str] = []
-        if "mutual fund" in lower:
-            meeting_summary.append("Advisor introduced a mutual fund investment option to the client")
-        if "sip" in lower and (amount or duration_years):
-            if amount and duration_years:
-                meeting_summary.append(
-                    f"A SIP of ₹{amount} per month for a period of {duration_years} years was discussed"
-                )
-            elif amount:
-                meeting_summary.append(f"A SIP of ₹{amount} per month was discussed")
-            elif duration_years:
-                meeting_summary.append(f"A SIP duration of {duration_years} years was discussed")
-        if "one crore" in lower or "crore" in lower or "returns" in lower or "grow" in lower:
-            meeting_summary.append(
-                "Advisor indicated the investment could grow over time based on expected returns"
-            )
-
-        if not meeting_summary:
-            sentences = [s.strip() for s in re.split(r"[.!?]\s+", transcript) if s.strip()]
-            meeting_summary = sentences[:5]
-
-        if len(meeting_summary) > 5:
-            meeting_summary = meeting_summary[:5]
-        while 0 < len(meeting_summary) < 3:
-            meeting_summary.append("No additional details provided.")
-
-        action_items = [
-            "Explain realistic return assumptions and risks associated with the investment",
-            "Share a detailed proposal with projected returns",
-            "Confirm client interest before proceeding",
-        ]
-
+    def _empty_payload(self) -> Dict[str, Any]:
         return {
-            "is_financial_meeting": True,
-            "financial_products": products,
-            "client_intent": intent,
-            "meeting_summary": meeting_summary,
-            "action_items": action_items,
+            "is_financial_meeting": False,
+            "financial_products": [],
+            "client_intent": "",
+            "meeting_summary": [],
+            "action_items": [],
             "follow_up_date": None,
-            "confidence_level": "medium",
+            "confidence_level": "low",
         }
 
     def _is_iso_date(self, value: Optional[str]) -> bool:

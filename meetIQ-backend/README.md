@@ -17,6 +17,7 @@ uvicorn main:app --reload
 ## Environment Variables
 
 - GEMINI_API_KEY: API key for Google Gemini
+- GOOGLE_API_KEY: Alternate env var supported by google-adk
 - GEMINI_MODEL: Model name (default: gemini-2.5-flash)
 - STT_FALLBACK_PLACEHOLDER: Return a demo transcript when Whisper yields empty (default: true)
 
