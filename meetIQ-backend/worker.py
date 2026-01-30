@@ -1,8 +1,5 @@
-import asyncio
 import json
 import os
-import shutil
-import boto3
 import tempfile
 from pathlib import Path
 from typing import Any, Dict
@@ -249,7 +246,7 @@ def create_redis_settings() -> RedisSettings:
     settings.conn_retry_delay = 1
     return settings
 
-class WorkerSettingsV2:
+class WorkerSettings:
     functions = [dispatch_processing_task_v2, transcribe_chunk_task_v2, merge_and_summarize_task_v2]
     
     redis_settings = create_redis_settings()
