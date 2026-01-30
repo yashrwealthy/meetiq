@@ -21,6 +21,9 @@ uvicorn main:app --reload
 - GEMINI_MODEL: Model name (default: gemini-2.5-flash)
 - STT_FALLBACK_PLACEHOLDER: Return a demo transcript when Whisper yields empty (default: true)
 
+## Worker
+ `arq worker.WorkerSettings`
+
 ## Sample Request
 
 curl -X POST "http://127.0.0.1:8000/meetings/process" \
