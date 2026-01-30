@@ -19,3 +19,23 @@ async def save_upload_file(upload_file: UploadFile, meeting_id: Optional[str] = 
 
     await upload_file.close()
     return os.fspath(file_path)
+
+
+async def save_chunk_file(
+    upload_file: UploadFile,
+    client_id: str,
+    meeting_id: str,
+    chunk_id: int
+) -> str:
+    base_dir = Path("uploads") / client_id / meeting_id
+    base_dir.mkdir(parents=True, exist_ok=True)
+    
+    file_path = base_dir / f"chunk_{chunk_id}.aac"
+    
+    content = await upload_file.read()
+    with open(file_path, "wb") as f:
+        f.write(content)
+        
+    await upload_file.close()
+    return os.fspath(file_path)
+
