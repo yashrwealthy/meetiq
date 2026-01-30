@@ -17,4 +17,11 @@ async def lifespan(app: FastAPI):
     await app.state.redis_pool.close()
 
 app = FastAPI(title="MeetIQ Backend", version="1.0.0", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins for development
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all methods (GET, POST, etc.)
+    allow_headers=["*"],  # Allow all headers
+)
 app.include_router(meetings_router, prefix="/meetings", tags=["meetings"])
