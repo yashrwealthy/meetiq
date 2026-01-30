@@ -18,6 +18,8 @@ class _RecordScreenState extends State<RecordScreen> with TickerProviderStateMix
   late AnimationController _waveController;
   final List<double> _waveHeights = [];
   Timer? _waveTimer;
+  Timer? _silenceCheckTimer;
+  bool _silenceDialogShown = false;
 
   @override
   void initState() {
@@ -36,24 +38,164 @@ class _RecordScreenState extends State<RecordScreen> with TickerProviderStateMix
   void dispose() {
     _waveController.dispose();
     _waveTimer?.cancel();
+    _silenceCheckTimer?.cancel();
     super.dispose();
   }
 
   void _startWaveAnimation() {
     _waveTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
       if (mounted) {
+        final controller = Get.find<RecordingController>();
         setState(() {
-          for (int i = 0; i < _waveHeights.length; i++) {
-            _waveHeights[i] = 0.2 + Random().nextDouble() * 0.6;
+          // When paused or muted, show flat lines
+          if (controller.isPaused.value || controller.isMuted.value) {
+            for (int i = 0; i < _waveHeights.length; i++) {
+              _waveHeights[i] = 0.1;
+            }
+          } else {
+            for (int i = 0; i < _waveHeights.length; i++) {
+              _waveHeights[i] = 0.2 + Random().nextDouble() * 0.6;
+            }
           }
         });
       }
     });
+    
+    // Start silence detection timer
+    _startSilenceDetection();
   }
 
   void _stopWaveAnimation() {
     _waveTimer?.cancel();
     _waveTimer = null;
+    _silenceCheckTimer?.cancel();
+    _silenceCheckTimer = null;
+  }
+
+  void _startSilenceDetection() {
+    _silenceCheckTimer?.cancel();
+    _silenceCheckTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      final controller = Get.find<RecordingController>();
+      
+      // Check if we should show the silence warning
+      if (controller.shouldShowSilenceWarning && !_silenceDialogShown) {
+        _silenceDialogShown = true;
+        _showSilenceWarningDialog(controller);
+      }
+    });
+  }
+
+  Future<void> _showSilenceWarningDialog(RecordingController controller) async {
+    final isMuted = controller.isMuted.value;
+    
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Warning icon
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFF9800),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Icon(
+                  isMuted ? Icons.mic_off : Icons.volume_off,
+                  color: Colors.white,
+                  size: 32,
+                ),
+              ),
+              const SizedBox(height: 20),
+              // Title
+              Text(
+                isMuted ? 'Microphone is Muted' : 'No Audio Detected',
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1E3A5F),
+                ),
+              ),
+              const SizedBox(height: 12),
+              // Description
+              Text(
+                isMuted 
+                    ? 'Your microphone has been muted for over 10 seconds. Are you sure you want to continue recording with mute on?'
+                    : 'We haven\'t detected any audio for over 10 seconds. Is anyone speaking?',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey.shade600,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 24),
+              // Buttons
+              Column(
+                children: [
+                  if (isMuted)
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          controller.toggleMute();
+                          Navigator.pop(context);
+                        },
+                        icon: const Icon(Icons.mic),
+                        label: const Text('Unmute'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF1E3A5F),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          elevation: 0,
+                        ),
+                      ),
+                    ),
+                  if (isMuted) const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton(
+                      onPressed: () {
+                        controller.acknowledgeSilenceWarning();
+                        Navigator.pop(context);
+                      },
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF1E3A5F),
+                        side: BorderSide(color: Colors.grey.shade300),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      child: Text(
+                        isMuted ? 'Keep Muted' : 'Continue Recording',
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    
+    // Reset the dialog flag after dismissal
+    _silenceDialogShown = false;
   }
 
   Future<void> _showConsentDialog(BuildContext context, RecordingController controller) async {
@@ -286,87 +428,175 @@ class _RecordScreenState extends State<RecordScreen> with TickerProviderStateMix
           // Waveform
           SizedBox(
             height: 60,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(
-                _waveHeights.length,
-                (index) => AnimatedContainer(
-                  duration: const Duration(milliseconds: 100),
-                  width: 4,
-                  height: 60 * _waveHeights[index],
-                  margin: const EdgeInsets.symmetric(horizontal: 2),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFF6B6B),
-                    borderRadius: BorderRadius.circular(2),
+            child: Obx(() {
+              final isPaused = controller.isPaused.value;
+              final isMuted = controller.isMuted.value;
+              return Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(
+                  _waveHeights.length,
+                  (index) => AnimatedContainer(
+                    duration: const Duration(milliseconds: 100),
+                    width: 4,
+                    height: 60 * _waveHeights[index],
+                    margin: const EdgeInsets.symmetric(horizontal: 2),
+                    decoration: BoxDecoration(
+                      color: isPaused 
+                          ? Colors.grey.shade400 
+                          : isMuted 
+                              ? Colors.orange.shade300 
+                              : const Color(0xFFFF6B6B),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
                   ),
                 ),
-              ),
-            ),
+              );
+            }),
           ),
           const SizedBox(height: 32),
           // Timer
           Obx(() => Text(
                 _formatTime(controller.elapsedSeconds.value),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 56,
                   fontWeight: FontWeight.w300,
-                  color: Color(0xFFFF6B6B),
+                  color: controller.isPaused.value 
+                      ? Colors.grey.shade500 
+                      : const Color(0xFFFF6B6B),
                   letterSpacing: 4,
                 ),
               )),
           const SizedBox(height: 8),
           // Status
-          Text(
-            'Recording in progress',
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.grey.shade500,
-            ),
-          ),
-          const SizedBox(height: 48),
-          // Stop button
-          GestureDetector(
-            onTap: () async {
-              _stopWaveAnimation();
-              await controller.stopRecording();
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Recording saved!')),
-                );
-                context.go('/recordings');
-              }
-            },
-            child: Container(
-              width: 100,
-              height: 100,
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFE5E5),
-                shape: BoxShape.circle,
+          Obx(() {
+            String statusText = 'Recording in progress';
+            Color statusColor = Colors.grey.shade500;
+            
+            if (controller.isPaused.value) {
+              statusText = 'Recording paused';
+              statusColor = Colors.orange;
+            } else if (controller.isMuted.value) {
+              statusText = 'Microphone muted';
+              statusColor = Colors.orange;
+            }
+            
+            return Text(
+              statusText,
+              style: TextStyle(
+                fontSize: 14,
+                color: statusColor,
               ),
-              child: Center(
+            );
+          }),
+          const SizedBox(height: 48),
+          // Control buttons row
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // Mute button
+              Obx(() => _buildControlButton(
+                icon: controller.isMuted.value ? Icons.mic_off : Icons.mic,
+                label: controller.isMuted.value ? 'Unmute' : 'Mute',
+                color: controller.isMuted.value ? Colors.orange : Colors.grey.shade600,
+                onTap: controller.toggleMute,
+              )),
+              const SizedBox(width: 24),
+              // Stop button (center, larger)
+              GestureDetector(
+                onTap: () async {
+                  _stopWaveAnimation();
+                  await controller.stopRecording();
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Recording saved!')),
+                    );
+                    context.go('/recordings');
+                  }
+                },
                 child: Container(
-                  width: 72,
-                  height: 72,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFFFF6B6B),
+                  width: 100,
+                  height: 100,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFE5E5),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(
-                    Icons.stop_rounded,
-                    color: Colors.white,
-                    size: 36,
+                  child: Center(
+                    child: Container(
+                      width: 72,
+                      height: 72,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFFF6B6B),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.stop_rounded,
+                        color: Colors.white,
+                        size: 36,
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
+              const SizedBox(width: 24),
+              // Pause/Resume button
+              Obx(() => _buildControlButton(
+                icon: controller.isPaused.value ? Icons.play_arrow : Icons.pause,
+                label: controller.isPaused.value ? 'Resume' : 'Pause',
+                color: controller.isPaused.value ? const Color(0xFF00BFA5) : Colors.grey.shade600,
+                onTap: () async {
+                  if (controller.isPaused.value) {
+                    await controller.resumeRecording();
+                  } else {
+                    await controller.pauseRecording();
+                  }
+                },
+              )),
+            ],
           ),
           const SizedBox(height: 24),
           // Instruction
           Text(
-            'Tap the button to stop and save the recording',
+            'Tap the center button to stop and save',
             style: TextStyle(
               fontSize: 14,
               color: Colors.grey.shade500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildControlButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        children: [
+          Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.15),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              icon,
+              color: color,
+              size: 28,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: color,
+              fontWeight: FontWeight.w500,
             ),
           ),
         ],
