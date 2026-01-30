@@ -20,7 +20,8 @@ class RecordingController extends GetxController {
   
   // Silence detection
   final currentAmplitude = 0.0.obs;
-  final silenceDuration = 0.obs;  // seconds of continuous silence
+  final silenceDuration = 0.obs;  // seconds of continuous silence (when NOT muted)
+  final muteDuration = 0.obs;     // seconds of being muted
   
   Timer? _timer;
   Timer? _amplitudeTimer;
@@ -38,6 +39,7 @@ class RecordingController extends GetxController {
     isPaused.value = false;
     isMuted.value = false;
     silenceDuration.value = 0;
+    muteDuration.value = 0;
     currentAmplitude.value = 0.0;
 
     // Generate unique recording ID
@@ -108,7 +110,10 @@ class RecordingController extends GetxController {
     isMuted.value = !isMuted.value;
     _audioService.setMuted(isMuted.value);
     if (isMuted.value) {
-      // Reset silence counter when muting (we'll track mute duration separately)
+      // Reset mute duration when starting to mute
+      muteDuration.value = 0;
+    } else {
+      // Reset silence duration when unmuting
       silenceDuration.value = 0;
     }
     debugPrint('Recording muted: ${isMuted.value}');
@@ -123,26 +128,47 @@ class RecordingController extends GetxController {
       final amplitude = await _audioService.getAmplitude();
       currentAmplitude.value = amplitude;
       
-      // Track silence duration
-      if (amplitude < silenceAmplitudeThreshold || isMuted.value) {
-        silenceDuration.value += 1;
-      } else {
+      // Track mute duration separately from silence duration
+      if (isMuted.value) {
+        muteDuration.value += 1;
+        // Don't track silence when muted
         silenceDuration.value = 0;
+      } else {
+        muteDuration.value = 0;
+        // Track silence duration only when NOT muted
+        if (amplitude < silenceAmplitudeThreshold) {
+          silenceDuration.value += 1;
+        } else {
+          silenceDuration.value = 0;
+        }
       }
     });
   }
 
-  /// Check if silence warning should be shown
+  /// Check if mute warning should be shown (only when muted for 10+ seconds)
+  bool get shouldShowMuteWarning {
+    return isRecording.value && 
+           !isPaused.value && 
+           isMuted.value && 
+           muteDuration.value >= silenceThresholdSeconds;
+  }
+
+  /// Check if silence warning should be shown (only when NOT muted and silence for 10+ seconds)
   bool get shouldShowSilenceWarning {
     return isRecording.value && 
            !isPaused.value && 
-           (silenceDuration.value >= silenceThresholdSeconds || 
-            (isMuted.value && silenceDuration.value >= silenceThresholdSeconds));
+           !isMuted.value && 
+           silenceDuration.value >= silenceThresholdSeconds;
   }
 
   /// Reset silence duration (call after user acknowledges the warning)
   void acknowledgeSilenceWarning() {
     silenceDuration.value = 0;
+  }
+
+  /// Reset mute duration (call after user acknowledges the warning)
+  void acknowledgeMuteWarning() {
+    muteDuration.value = 0;
   }
   
   // Getter for backward compatibility

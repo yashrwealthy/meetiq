@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:go_router/go_router.dart';
 
 import '../controllers/recording_controller.dart';
+import '../services/alert_sound_service.dart';
 
 class RecordScreen extends StatefulWidget {
   const RecordScreen({super.key});
@@ -19,7 +21,9 @@ class _RecordScreenState extends State<RecordScreen> with TickerProviderStateMix
   final List<double> _waveHeights = [];
   Timer? _waveTimer;
   Timer? _silenceCheckTimer;
+  bool _muteDialogShown = false;
   bool _silenceDialogShown = false;
+  final AlertSoundService _alertSoundService = AlertSoundService();
 
   @override
   void initState() {
@@ -32,6 +36,8 @@ class _RecordScreenState extends State<RecordScreen> with TickerProviderStateMix
     for (int i = 0; i < 20; i++) {
       _waveHeights.add(0.3 + Random().nextDouble() * 0.4);
     }
+    // Initialize alert sound service
+    _alertSoundService.init();
   }
 
   @override
@@ -78,16 +84,30 @@ class _RecordScreenState extends State<RecordScreen> with TickerProviderStateMix
       if (!mounted) return;
       final controller = Get.find<RecordingController>();
       
-      // Check if we should show the silence warning
-      if (controller.shouldShowSilenceWarning && !_silenceDialogShown) {
+      // Check if we should show the mute warning (muted for 10+ seconds)
+      if (controller.shouldShowMuteWarning && !_muteDialogShown) {
+        _muteDialogShown = true;
+        _showMuteWarningDialog(controller);
+      }
+      // Check if we should show the silence warning (NOT muted but no audio for 10+ seconds)
+      else if (controller.shouldShowSilenceWarning && !_silenceDialogShown) {
         _silenceDialogShown = true;
         _showSilenceWarningDialog(controller);
       }
     });
   }
 
-  Future<void> _showSilenceWarningDialog(RecordingController controller) async {
-    final isMuted = controller.isMuted.value;
+  /// Play alert sound using AlertSoundService
+  Future<void> _playAlertSound() async {
+    // Use haptic feedback
+    HapticFeedback.heavyImpact();
+    // Play audio alert
+    await _alertSoundService.playAlert();
+  }
+
+  /// Show dialog when microphone is muted for too long
+  Future<void> _showMuteWarningDialog(RecordingController controller) async {
+    await _playAlertSound();
     
     await showDialog(
       context: context,
@@ -107,17 +127,17 @@ class _RecordScreenState extends State<RecordScreen> with TickerProviderStateMix
                   color: const Color(0xFFFF9800),
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: Icon(
-                  isMuted ? Icons.mic_off : Icons.volume_off,
+                child: const Icon(
+                  Icons.mic_off,
                   color: Colors.white,
                   size: 32,
                 ),
               ),
               const SizedBox(height: 20),
               // Title
-              Text(
-                isMuted ? 'Microphone is Muted' : 'No Audio Detected',
-                style: const TextStyle(
+              const Text(
+                'Microphone is Muted',
+                style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
                   color: Color(0xFF1E3A5F),
@@ -126,9 +146,7 @@ class _RecordScreenState extends State<RecordScreen> with TickerProviderStateMix
               const SizedBox(height: 12),
               // Description
               Text(
-                isMuted 
-                    ? 'Your microphone has been muted for over 10 seconds. Are you sure you want to continue recording with mute on?'
-                    : 'We haven\'t detected any audio for over 10 seconds. Is anyone speaking?',
+                'Your microphone has been muted for over 10 seconds. Are you sure you want to continue recording with mute on?',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 14,
@@ -140,33 +158,32 @@ class _RecordScreenState extends State<RecordScreen> with TickerProviderStateMix
               // Buttons
               Column(
                 children: [
-                  if (isMuted)
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: () {
-                          controller.toggleMute();
-                          Navigator.pop(context);
-                        },
-                        icon: const Icon(Icons.mic),
-                        label: const Text('Unmute'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF1E3A5F),
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          elevation: 0,
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        controller.toggleMute();
+                        Navigator.pop(context);
+                      },
+                      icon: const Icon(Icons.mic),
+                      label: const Text('Unmute'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1E3A5F),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
                         ),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        elevation: 0,
                       ),
                     ),
-                  if (isMuted) const SizedBox(height: 12),
+                  ),
+                  const SizedBox(height: 12),
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton(
                       onPressed: () {
-                        controller.acknowledgeSilenceWarning();
+                        controller.acknowledgeMuteWarning();
                         Navigator.pop(context);
                       },
                       style: OutlinedButton.styleFrom(
@@ -177,12 +194,118 @@ class _RecordScreenState extends State<RecordScreen> with TickerProviderStateMix
                         ),
                         padding: const EdgeInsets.symmetric(vertical: 14),
                       ),
-                      child: Text(
-                        isMuted ? 'Keep Muted' : 'Continue Recording',
-                        style: const TextStyle(
+                      child: const Text(
+                        'Keep Muted',
+                        style: TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.w600,
                         ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    
+    // Reset the dialog flag after dismissal
+    _muteDialogShown = false;
+  }
+
+  /// Show dialog when no audio is detected (silence)
+  Future<void> _showSilenceWarningDialog(RecordingController controller) async {
+    await _playAlertSound();
+    
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Warning icon
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFF9800),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Icon(
+                  Icons.volume_off,
+                  color: Colors.white,
+                  size: 32,
+                ),
+              ),
+              const SizedBox(height: 20),
+              // Title
+              const Text(
+                'No Audio Detected',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1E3A5F),
+                ),
+              ),
+              const SizedBox(height: 12),
+              // Description
+              Text(
+                'We haven\'t detected any audio for over 10 seconds. Is anyone speaking?',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey.shade600,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 24),
+              // Buttons
+              Column(
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        controller.acknowledgeSilenceWarning();
+                        Navigator.pop(context);
+                      },
+                      icon: const Icon(Icons.play_arrow),
+                      label: const Text('Continue Recording'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1E3A5F),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        elevation: 0,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () async {
+                        controller.acknowledgeSilenceWarning();
+                        await controller.pauseRecording();
+                        if (mounted) Navigator.pop(context);
+                      },
+                      icon: const Icon(Icons.pause),
+                      label: const Text('Pause Recording'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFFFF9800),
+                        side: const BorderSide(color: Color(0xFFFF9800)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
                       ),
                     ),
                   ),
