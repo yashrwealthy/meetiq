@@ -88,6 +88,27 @@ class AudioService {
     _isMuted = false;
   }
 
+  /// Cancel recording without saving
+  Future<void> cancelMeeting(String meetingId, StorageService storage) async {
+    debugPrint('AudioService: Cancelling meeting $meetingId');
+    _chunkTimer?.cancel();
+    _elapsedTimer?.cancel();
+    if (await _recorder.isRecording()) {
+      await _recorder.stop();
+      // Don't save the chunk
+    }
+    
+    // Delete any saved data for this recording
+    await storage.deleteMeeting(meetingId);
+    
+    // Reset state
+    _currentMeetingId = null;
+    _currentStorage = null;
+    _onChunkStarted = null;
+    _isPaused = false;
+    _isMuted = false;
+  }
+
   /// Pause recording
   Future<void> pauseRecording() async {
     if (_isPaused) return;

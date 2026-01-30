@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../services/graphql_service.dart';
 import '../services/storage_service.dart';
 import '../services/user_service.dart';
+import '../widgets/voice_note_popup.dart';
 
 class ClientProfileScreen extends StatefulWidget {
   const ClientProfileScreen({super.key});
@@ -301,7 +302,19 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
                 iconColor: const Color(0xFF00BFA5),
                 title: 'Voice Note',
                 subtitle: 'Quick note',
-                onTap: () => context.go('/record'),
+                onTap: () async {
+                  final saved = await showVoiceNotePopup(context);
+                  if (saved && mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Voice note saved!'),
+                        backgroundColor: Color(0xFF00BFA5),
+                      ),
+                    );
+                    // Refresh recordings count
+                    _loadData();
+                  }
+                },
               )),
               const SizedBox(width: 12),
               Expanded(child: _buildQuickActionCard(

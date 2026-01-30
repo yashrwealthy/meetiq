@@ -79,3 +79,12 @@ Future<List<String>> listChunkFiles(String userId, String recordingId) async {
   files.sort();
   return files;
 }
+
+/// Delete a meeting and all its data
+Future<void> deleteMeeting(String userId, String recordingId) async {
+  final dirPath = await getMeetingDirPath(userId, recordingId);
+  final directory = Directory(dirPath);
+  if (directory.existsSync()) {
+    await directory.delete(recursive: true);
+  }
+}

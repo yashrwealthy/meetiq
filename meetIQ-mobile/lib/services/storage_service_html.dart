@@ -19,3 +19,8 @@ Future<List<Map<String, dynamic>>> listMeetingsMetadata(String userId) async {
 Future<List<String>> listChunkFiles(String userId, String recordingId) async {
   return [];
 }
+
+/// Delete a meeting and all its data
+Future<void> deleteMeeting(String userId, String recordingId) async {
+  // Web storage is handled in-memory in storage_service.dart
+}

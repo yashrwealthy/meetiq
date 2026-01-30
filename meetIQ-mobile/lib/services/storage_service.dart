@@ -171,6 +171,21 @@ class StorageService {
     _webChunks[key]!.add(blobUrl);
   }
 
+  /// Delete a meeting and all its data
+  Future<void> deleteMeeting(String recordingId) async {
+    final key = await _getStorageKey(recordingId);
+    debugPrint('StorageService: Deleting meeting $recordingId');
+    
+    if (kIsWeb) {
+      _webMetadata.remove(key);
+      _webChunks.remove(key);
+      return;
+    }
+    
+    final userId = await _userService.getCurrentUserId() ?? 'default_user';
+    await platform.deleteMeeting(userId, recordingId);
+  }
+
   Future<void> saveMeetingResult(String recordingId, MeetingResult result) async {
     final data = await loadMetadata(recordingId);
     

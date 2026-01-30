@@ -88,6 +88,17 @@ class RecordingController extends GetxController {
     await _audioService.stopMeeting(recordingId.value, _storageService);
   }
 
+  /// Cancel the recording without saving
+  Future<void> cancelRecording() async {
+    if (!isRecording.value) return;
+    isRecording.value = false;
+    isPaused.value = false;
+    isMuted.value = false;
+    _timer?.cancel();
+    _amplitudeTimer?.cancel();
+    await _audioService.cancelMeeting(recordingId.value, _storageService);
+  }
+
   /// Pause the recording
   Future<void> pauseRecording() async {
     if (!isRecording.value || isPaused.value) return;
