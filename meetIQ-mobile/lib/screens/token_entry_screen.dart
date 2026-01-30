@@ -24,8 +24,8 @@ class _TokenEntryScreenState extends State<TokenEntryScreen> {
   }
 
   void _useDemoCredentials() {
-    _tokenController.text = 'WLT-PARTNER-DEMO-0001';
-    _clientController.text = 'CLT-DEMO-00001';
+    _tokenController.text = 'eb08cb35efcf1e7413adf5dce51dd06bf1ef2742';
+    _clientController.text = '34b90fb7-28ba-43c7-b402-59e463cc4acc';
   }
 
   Future<void> _login() async {

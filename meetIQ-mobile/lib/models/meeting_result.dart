@@ -1,4 +1,4 @@
-class MeetingResult {
+  class MeetingResult {
   final bool isFinancialMeeting;
   final List<String> financialProducts;
   final String? clientIntent;

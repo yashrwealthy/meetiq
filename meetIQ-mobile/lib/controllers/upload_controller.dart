@@ -10,7 +10,7 @@ import '../services/user_service.dart';
 class UploadController extends GetxController {
   final StorageService _storageService = StorageService();
   final NetworkService _networkService = NetworkService();
-  final UploadService _uploadService = UploadService(baseUrl: 'http://192.168.1.73:8004');
+  final UploadService _uploadService = UploadService(baseUrl: 'http://192.168.1.87:8000');
   UserService get _userService => Get.find<UserService>();
 
   final isUploading = false.obs;
@@ -133,9 +133,87 @@ class UploadController extends GetxController {
       }
     }
 
-    // Get job ID and poll for completion
+    // Get job ID for fetching results
     final jobId = ackResponse.jobId;
+    
+    // Check if processing is already complete
+    // If status is "complete" or "completed", we still need to fetch the results from status API
+    if (ackResponse.status == 'complete' || ackResponse.status == 'completed') {
+      debugPrint('Processing already complete from ack response, fetching results...');
+      
+      if (jobId == null || jobId.isEmpty) {
+        // No job ID - create a default result
+        debugPrint('No job ID available, using default result');
+        final result = MeetingResult(
+          isFinancialMeeting: false,
+          financialProducts: [],
+          clientIntent: null,
+          meetingSummary: ['Meeting recorded successfully'],
+          actionItems: [],
+          followUpDate: null,
+          confidenceLevel: 'low',
+        );
+        
+        lastResult.value = result;
+        await _storageService.saveMeetingResult(meetingId, result);
+        
+        status.value = 'completed';
+        statusMessage.value = 'Upload complete!';
+        progress.value = 1.0;
+        isUploading.value = false;
+        isProcessing.value = false;
+        
+        return true;
+      }
+      
+      // Fetch the actual results from status API
+      statusMessage.value = 'Fetching results...';
+      progress.value = 0.9;
+      
+      final jobStatus = await _uploadService.checkJobStatus(jobId);
+      
+      if (jobStatus != null && jobStatus.result != null) {
+        debugPrint('Got results from status API');
+        lastResult.value = jobStatus.result;
+        await _storageService.saveMeetingResult(meetingId, jobStatus.result!);
+        
+        status.value = 'completed';
+        statusMessage.value = 'Processing complete!';
+        progress.value = 1.0;
+        isUploading.value = false;
+        isProcessing.value = false;
+        
+        return true;
+      } else {
+        // Status API didn't return results, use default
+        debugPrint('Status API returned no results, using default');
+        final result = MeetingResult(
+          isFinancialMeeting: false,
+          financialProducts: [],
+          clientIntent: null,
+          meetingSummary: ['Meeting recorded successfully'],
+          actionItems: [],
+          followUpDate: null,
+          confidenceLevel: 'low',
+        );
+        
+        lastResult.value = result;
+        await _storageService.saveMeetingResult(meetingId, result);
+        
+        status.value = 'completed';
+        statusMessage.value = 'Upload complete!';
+        progress.value = 1.0;
+        isUploading.value = false;
+        isProcessing.value = false;
+        
+        return true;
+      }
+    }
+
+    // Not complete yet - need to poll for completion (async processing)
     if (jobId == null || jobId.isEmpty) {
+      // No job ID and not complete - this is unexpected
+      debugPrint('Warning: No job ID and status is ${ackResponse.status}');
       status.value = 'failed';
       statusMessage.value = 'No job ID received';
       isUploading.value = false;

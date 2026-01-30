@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 
 import '../models/meeting_result.dart';
 import 'upload_service_io.dart' if (dart.library.html) 'upload_service_html.dart' as platform;
@@ -129,6 +130,7 @@ class UploadService {
           'file',
           bytes,
           filename: 'chunk$chunkIndex.webm',
+          contentType: MediaType('audio', 'webm'),
         ));
       } else {
         // On native, filePath is a file system path
