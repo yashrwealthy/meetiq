@@ -27,10 +27,18 @@ class AudioService {
     required StorageService storage,
     required void Function(int chunkIndex) onChunkStarted,
   }) async {
+    // Cancel any existing timers from previous recording
+    _chunkTimer?.cancel();
+    _elapsedTimer?.cancel();
+    
+    // Reset state for new recording
     _startTime = DateTime.now();
-    _chunkIndex = 0;
+    _chunkIndex = 0;  // Reset chunk index for new recording
     _currentMeetingId = meetingId;
     _currentStorage = storage;
+    
+    debugPrint('AudioService: Starting new meeting $meetingId, chunk index reset to $_chunkIndex');
+    
     await _startChunk(meetingId, storage, onChunkStarted);
     _chunkTimer?.cancel();
     _chunkTimer = Timer.periodic(chunkDuration, (_) async {
@@ -41,10 +49,12 @@ class AudioService {
   }
 
   Future<void> stopMeeting(String meetingId, StorageService storage) async {
+    debugPrint('AudioService: Stopping meeting $meetingId');
     _chunkTimer?.cancel();
     _elapsedTimer?.cancel();
     if (await _recorder.isRecording()) {
       final path = await _recorder.stop();
+      debugPrint('AudioService: Final chunk saved: $path');
       // On web, path is a blob URL - store it
       if (kIsWeb && path != null) {
         await storage.addWebChunk(meetingId, path);
@@ -53,7 +63,12 @@ class AudioService {
     if (_startTime != null) {
       final duration = DateTime.now().difference(_startTime!).inSeconds;
       await storage.setDuration(meetingId, duration);
+      debugPrint('AudioService: Meeting $meetingId duration: $duration seconds, total chunks: $_chunkIndex');
     }
+    
+    // Reset state after stopping
+    _currentMeetingId = null;
+    _currentStorage = null;
   }
 
   Future<void> _rotateChunk(
@@ -82,6 +97,8 @@ class AudioService {
     final extension = isWeb ? 'webm' : 'm4a';
     final encoder = isWeb ? AudioEncoder.opus : AudioEncoder.aacLc;
     final filePath = '${dir.path}/chunk_${_chunkIndex.toString().padLeft(3, '0')}.$extension';
+    
+    debugPrint('AudioService: Starting chunk $_chunkIndex for meeting $meetingId');
     
     // For web, path is ignored but still required by the API
     await _recorder.start(

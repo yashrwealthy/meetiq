@@ -73,6 +73,9 @@ class StorageService {
   }) async {
     final userId = await _userService.getCurrentUserId() ?? 'default_user';
     final now = DateTime.now().toIso8601String();
+    
+    debugPrint('StorageService: Creating meeting $recordingId for user $userId, client: $clientName');
+    
     await saveMetadata(recordingId, {
       'recording_id': recordingId,
       'user_id': userId,
@@ -87,6 +90,8 @@ class StorageService {
     if (kIsWeb) {
       final key = await _getStorageKey(recordingId);
       _webChunks[key] = [];
+      debugPrint('StorageService: Web storage initialized for key: $key');
+      debugPrint('StorageService: Total recordings in web storage: ${_webMetadata.length}');
     }
   }
 
@@ -120,11 +125,20 @@ class StorageService {
     
     if (kIsWeb) {
       final prefix = '$userId/';
+      debugPrint('StorageService: Listing meetings for user prefix: $prefix');
+      debugPrint('StorageService: All keys in web storage: ${_webMetadata.keys.toList()}');
+      
       final list = _webMetadata.entries
           .where((e) => e.key.startsWith(prefix))
           .map((e) => Map<String, dynamic>.from(e.value))
           .toList();
       list.sort((a, b) => (b['start_time'] ?? '').compareTo(a['start_time'] ?? ''));
+      
+      debugPrint('StorageService: Found ${list.length} meetings for user $userId');
+      for (final meeting in list) {
+        debugPrint('StorageService: - Meeting ${meeting['recording_id']}: ${meeting['client_name']}');
+      }
+      
       return list;
     }
     return await platform.listMeetingsMetadata(userId);
@@ -148,6 +162,8 @@ class StorageService {
 
   Future<void> saveMeetingResult(String recordingId, MeetingResult result) async {
     final data = await loadMetadata(recordingId);
+    
+    // Core meeting analysis
     data['meeting_summary'] = result.meetingSummary;
     data['action_items'] = result.actionItems
         .map((text) => ActionItem(id: text.hashCode.toString(), text: text).toJson())
@@ -161,8 +177,18 @@ class StorageService {
               dueDate: result.followUpDate,
             ).toJson(),
           ];
+    
+    // New fields from API
+    data['is_financial_meeting'] = result.isFinancialMeeting;
+    data['financial_products'] = result.financialProducts;
+    data['client_intent'] = result.clientIntent;
+    data['confidence_level'] = result.confidenceLevel;
+    
+    // Status updates
     data['upload_status'] = 'completed';
     data['is_offline'] = false;
+    data['processed_at'] = DateTime.now().toIso8601String();
+    
     await saveMetadata(recordingId, data);
   }
 }

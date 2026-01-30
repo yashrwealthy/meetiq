@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
 
 import '../services/audio_service.dart';
@@ -22,10 +23,16 @@ class RecordingController extends GetxController {
       return false;
     }
 
+    // Reset state for new recording
+    chunkIndex.value = 0;
+    elapsedSeconds.value = 0;
+
     // Generate unique recording ID
     final id = _storageService.generateRecordingId();
     recordingId.value = id;
     clientName.value = client;
+    
+    debugPrint('Starting new recording with ID: $id for client: $client');
     
     // Create recording with user-specific storage path
     await _storageService.createMeeting(recordingId: id, clientName: client);
