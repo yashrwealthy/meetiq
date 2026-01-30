@@ -58,6 +58,8 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
 
   @override
   void dispose() {
+    // Stop polling when user navigates away
+    _uploadController.stopPolling();
     _playingSubscription?.cancel();
     _audioPlayer.dispose();
     super.dispose();
@@ -234,9 +236,15 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                 _buildAudioPlayerCard(),
                 const SizedBox(height: 16),
 
-                // Upload Section (if not uploaded)
-                if (!isUploaded) ...[
-                  _buildUploadCard(),
+                // Upload Section (if not uploaded and not processing)
+                if (!isUploaded && meeting.status != 'processing') ...[
+                  _buildUploadCard(meeting),
+                  const SizedBox(height: 16),
+                ],
+                
+                // Processing Section (if processing)
+                if (meeting.status == 'processing') ...[
+                  _buildProcessingCard(meeting),
                   const SizedBox(height: 16),
                 ],
 
@@ -302,28 +310,48 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
 
   Widget _buildStatusBadge(Meeting meeting) {
     final isUploaded = meeting.status == 'completed';
+    final isProcessing = meeting.status == 'processing';
+    
+    Color badgeColor;
+    IconData badgeIcon;
+    String badgeText;
+    
+    if (isUploaded) {
+      badgeColor = successGreen;
+      badgeIcon = Icons.cloud_done;
+      badgeText = 'Processed & Ready';
+    } else if (isProcessing) {
+      badgeColor = lightBlue;
+      badgeIcon = Icons.hourglass_top;
+      badgeText = 'Processing...';
+    } else {
+      badgeColor = warningOrange;
+      badgeIcon = Icons.cloud_off;
+      badgeText = 'Pending Upload';
+    }
+    
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: isUploaded ? successGreen.withAlpha(26) : warningOrange.withAlpha(26),
+        color: badgeColor.withAlpha(26),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
-          color: isUploaded ? successGreen.withAlpha(51) : warningOrange.withAlpha(51),
+          color: badgeColor.withAlpha(51),
         ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            isUploaded ? Icons.cloud_done : Icons.cloud_off,
+            badgeIcon,
             size: 18,
-            color: isUploaded ? successGreen : warningOrange,
+            color: badgeColor,
           ),
           const SizedBox(width: 8),
           Text(
-            isUploaded ? 'Processed & Ready' : 'Pending Upload',
+            badgeText,
             style: TextStyle(
-              color: isUploaded ? successGreen : warningOrange,
+              color: badgeColor,
               fontWeight: FontWeight.w600,
               fontSize: 14,
             ),
@@ -430,7 +458,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     );
   }
 
-  Widget _buildUploadCard() {
+  Widget _buildUploadCard(Meeting meeting) {
     return Obx(() {
       final isUploading = _uploadController.isUploading.value;
       final isProcessing = _uploadController.isProcessing.value;
@@ -530,6 +558,165 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
         ),
       );
     });
+  }
+  
+  Widget _buildProcessingCard(Meeting meeting) {
+    return Obx(() {
+      final isCheckingStatus = _uploadController.isCheckingStatus.value;
+      final isProcessing = _uploadController.isProcessing.value;
+      final progress = _uploadController.progress.value;
+      final statusMsg = _uploadController.statusMessage.value;
+
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withAlpha(13),
+              blurRadius: 10,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: lightBlue.withAlpha(26),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.hourglass_top, color: lightBlue, size: 20),
+                ),
+                const SizedBox(width: 12),
+                const Text(
+                  'Processing Status',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            if (isCheckingStatus || isProcessing) ...[
+              // Progress indicator
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: LinearProgressIndicator(
+                  value: progress > 0 ? progress : null,
+                  backgroundColor: Colors.grey[200],
+                  valueColor: const AlwaysStoppedAnimation<Color>(lightBlue),
+                  minHeight: 8,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(lightBlue),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      statusMsg.isNotEmpty ? statusMsg : 'Checking status...',
+                      style: TextStyle(color: Colors.grey[600], fontSize: 14),
+                    ),
+                  ),
+                  if (progress > 0)
+                    Text(
+                      '${(progress * 100).toInt()}%',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: primaryBlue,
+                      ),
+                    ),
+                ],
+              ),
+            ] else ...[
+              Text(
+                'Your recording was uploaded and is being processed by our AI. Tap the button below to check if processing is complete.',
+                style: TextStyle(color: Colors.grey[600], fontSize: 14),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: PrimaryButton(
+                  text: 'Check Processing Status',
+                  onPressed: () => _checkStatus(meeting),
+                ),
+              ),
+            ],
+          ],
+        ),
+      );
+    });
+  }
+  
+  Future<void> _checkStatus(Meeting meeting) async {
+    final jobId = meeting.jobId;
+    if (jobId == null || jobId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Row(
+            children: [
+              Icon(Icons.error_outline, color: Colors.white),
+              SizedBox(width: 8),
+              Text('No job ID found for this recording'),
+            ],
+          ),
+          backgroundColor: errorRed,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
+      return;
+    }
+
+    final success = await _uploadController.checkMeetingStatus(widget.meetingId, jobId);
+    if (success) {
+      await _loadMeeting();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.white),
+                SizedBox(width: 8),
+                Text('Processing complete!'),
+              ],
+            ),
+            backgroundColor: successGreen,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+      }
+    } else {
+      if (mounted && _uploadController.status.value == 'failed') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.error_outline, color: Colors.white),
+                const SizedBox(width: 8),
+                Expanded(child: Text(_uploadController.statusMessage.value)),
+              ],
+            ),
+            backgroundColor: errorRed,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+      }
+    }
   }
 
   Widget _buildFinancialMeetingBadge(Meeting meeting) {

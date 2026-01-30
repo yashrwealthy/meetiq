@@ -19,6 +19,9 @@ class Meeting {
   final List<String> financialProducts;
   final String clientIntent;
   final double confidenceLevel;
+  
+  // Job tracking
+  final String? jobId;
 
   Meeting({
     required this.id,
@@ -36,6 +39,7 @@ class Meeting {
     this.financialProducts = const [],
     this.clientIntent = '',
     this.confidenceLevel = 0.0,
+    this.jobId,
   });
 
   /// Parse confidence level from string or number
@@ -81,6 +85,7 @@ class Meeting {
       financialProducts: (json['financial_products'] as List<dynamic>? ?? []).cast<String>(),
       clientIntent: json['client_intent'] as String? ?? '',
       confidenceLevel: _parseConfidenceLevel(json['confidence_level']),
+      jobId: json['job_id'] as String?,
     );
   }
 
@@ -102,6 +107,7 @@ class Meeting {
       'financial_products': financialProducts,
       'client_intent': clientIntent,
       'confidence_level': confidenceLevel,
+      'job_id': jobId,
     };
   }
 }

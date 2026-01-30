@@ -300,6 +300,7 @@ class _RecordingsListScreenState extends State<RecordingsListScreen> {
 
   Widget _buildRecordingCard(Meeting meeting) {
     final isUploaded = meeting.status == 'completed';
+    final isProcessing = meeting.status == 'processing';
     final hasPartialUpload = meeting.uploadedChunks > 0 && meeting.uploadedChunks < meeting.totalChunks;
     final progress = meeting.totalChunks > 0 ? meeting.uploadedChunks / meeting.totalChunks : 0.0;
 
@@ -307,6 +308,27 @@ class _RecordingsListScreenState extends State<RecordingsListScreen> {
     String summaryText = 'Recording saved locally';
     if (meeting.summary.isNotEmpty) {
       summaryText = meeting.summary.first;
+    } else if (isProcessing) {
+      summaryText = 'Processing in progress...';
+    }
+    
+    // Determine icon and color based on status
+    Color iconBgColor;
+    Color iconColor;
+    IconData statusIcon;
+    
+    if (isUploaded) {
+      iconBgColor = const Color(0xFFE0F7F4);
+      iconColor = const Color(0xFF00BFA5);
+      statusIcon = Icons.chat_bubble_outline;
+    } else if (isProcessing) {
+      iconBgColor = const Color(0xFFE3F2FD);
+      iconColor = const Color(0xFF1976D2);
+      statusIcon = Icons.hourglass_top;
+    } else {
+      iconBgColor = const Color(0xFFEEF2F7);
+      iconColor = const Color(0xFF1E3A5F);
+      statusIcon = Icons.mic_none;
     }
 
     return GestureDetector(
@@ -333,16 +355,12 @@ class _RecordingsListScreenState extends State<RecordingsListScreen> {
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                color: isUploaded
-                    ? const Color(0xFFE0F7F4)
-                    : const Color(0xFFEEF2F7),
+                color: iconBgColor,
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Icon(
-                isUploaded ? Icons.chat_bubble_outline : Icons.mic_none,
-                color: isUploaded
-                    ? const Color(0xFF00BFA5)
-                    : const Color(0xFF1E3A5F),
+                statusIcon,
+                color: iconColor,
                 size: 24,
               ),
             ),
@@ -400,9 +418,11 @@ class _RecordingsListScreenState extends State<RecordingsListScreen> {
                             value: progress,
                             backgroundColor: Colors.grey.shade200,
                             valueColor: AlwaysStoppedAnimation<Color>(
-                              hasPartialUpload || isUploaded
-                                  ? const Color(0xFF00BFA5)
-                                  : Colors.grey.shade300,
+                              isProcessing
+                                  ? const Color(0xFF1976D2)
+                                  : (hasPartialUpload || isUploaded
+                                      ? const Color(0xFF00BFA5)
+                                      : Colors.grey.shade300),
                             ),
                             minHeight: 4,
                           ),

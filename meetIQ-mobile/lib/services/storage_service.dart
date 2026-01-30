@@ -119,6 +119,17 @@ class StorageService {
     await saveMetadata(recordingId, data);
   }
 
+  Future<void> saveJobId(String recordingId, String jobId) async {
+    final data = await loadMetadata(recordingId);
+    data['job_id'] = jobId;
+    await saveMetadata(recordingId, data);
+  }
+
+  Future<String?> getJobId(String recordingId) async {
+    final data = await loadMetadata(recordingId);
+    return data['job_id'] as String?;
+  }
+
   /// List all recordings for the current user
   Future<List<Map<String, dynamic>>> listMeetingsMetadata() async {
     final userId = await _userService.getCurrentUserId() ?? 'default_user';
