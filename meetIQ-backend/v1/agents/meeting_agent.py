@@ -102,6 +102,7 @@ class MeetingAgent:
             "\"client_intent\":\"\","
             "\"meeting_summary\":[],"
             "\"action_items\":[],"
+            "\"follow_ups\":[],"
             "\"follow_up_date\":null,"
             "\"confidence_level\":\"low\""
             "}"
@@ -133,15 +134,6 @@ class MeetingAgent:
                 new_message=content,
             )
             return await self._collect_adk_text(stream)
-            if hasattr(self.agent, "arun"):
-                result = await self.agent.arun(prompt)  # type: ignore[attr-defined]
-                return self._extract_text(result)
-            if hasattr(self.agent, "run"):
-                maybe_result = self.agent.run(prompt)  # type: ignore[attr-defined]
-                return await self._maybe_await(maybe_result)
-            if hasattr(self.agent, "invoke"):
-                maybe_result = self.agent.invoke(prompt)  # type: ignore[attr-defined]
-                return await self._maybe_await(maybe_result)
         except Exception:
             logger.exception("ADK execution failed")
             return ""

@@ -9,6 +9,7 @@ class MeetingOutput(BaseModel):
     client_intent: str
     meeting_summary: List[str]
     action_items: List[str]
+    follow_ups: List[str] = []
     follow_up_date: Optional[str]
     confidence_level: Literal["high", "medium", "low"]
     transcript: Optional[str] = None
@@ -41,5 +42,3 @@ class UploadAckResponse(BaseModel):
     missing_chunks: List[int]
     status: Literal["complete", "incomplete"]
     job_id: Optional[str] = None
-
-

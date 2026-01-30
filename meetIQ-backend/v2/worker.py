@@ -11,10 +11,10 @@ from datetime import datetime
 from arq.connections import RedisSettings
 
 from settings import Settings
-from v2.agents.meeting_agent import MeetingAgent
-from v2.agents.memory_agent import MemoryAgent
-from v2.services.storage import StorageService
-from v2.models.schemas import MeetingEvent, MeetingInsight, ClientMemory
+from .agents.meeting_agent import MeetingAgent
+from .agents.memory_agent import MemoryAgent
+from .services.storage import StorageService
+from .models.schemas import MeetingEvent, MeetingInsight, ClientMemory
 from services.stt_service import transcribe_audio
 
 # Load settings
@@ -96,6 +96,7 @@ async def dispatch_processing_task_v2(ctx: Dict[str, Any], client_id: str, meeti
         raise e
 
 async def transcribe_chunk_task_v2(ctx: Dict[str, Any], file_path: str, client_id: str, meeting_id: str, chunk_id: int, total_chunks: int) -> Dict[str, Any]:
+    # Use Gemini transcription
     from services.gemini_stt_service import transcribe_audio_gemini
     storage = StorageService()
     temp_file_path = None
@@ -117,9 +118,12 @@ async def transcribe_chunk_task_v2(ctx: Dict[str, Any], file_path: str, client_i
         else:
             local_input_path = file_path
 
+        # Get structured transcription (JSON with speaker diarization, timestamps, emotions, etc.)
         transcript_json = await transcribe_audio_gemini(local_input_path) or ""
         
+        # Save structured transcript as JSON
         if storage.use_s3:
+            # Save as .json to preserve structure
             json_key = f"uploads/{client_id}/{meeting_id}/chunk_{chunk_id}.json"
             storage.s3_client.put_object(
                 Bucket=storage.bucket_name,
@@ -127,6 +131,7 @@ async def transcribe_chunk_task_v2(ctx: Dict[str, Any], file_path: str, client_i
                 Body=transcript_json.encode("utf-8")
             )
         else:
+            # Save as .json instead of .txt to preserve structure
             json_path = Path(local_input_path).parent / f"chunk_{chunk_id}.json"
             json_path.parent.mkdir(parents=True, exist_ok=True)
             with open(json_path, 'w') as f:
@@ -167,6 +172,7 @@ async def merge_and_summarize_task_v2(ctx: Dict[str, Any], client_id: str, meeti
         all_segments = []
         audio_chunks_ref = []
         
+        # 1. Merge structured transcripts
         for i in range(total_chunks):
             if storage.use_s3:
                 json_key = f"uploads/{client_id}/{meeting_id}/chunk_{i}.json"
@@ -175,6 +181,7 @@ async def merge_and_summarize_task_v2(ctx: Dict[str, Any], client_id: str, meeti
                     content = resp['Body'].read().decode('utf-8')
                     chunk_data = json.loads(content)
                     
+                    # Extract segments from structured transcript
                     if "segments" in chunk_data:
                         all_segments.extend(chunk_data["segments"])
                     
@@ -188,16 +195,19 @@ async def merge_and_summarize_task_v2(ctx: Dict[str, Any], client_id: str, meeti
                     with open(json_path, 'r') as f:
                         chunk_data = json.loads(f.read())
                         
+                        # Extract segments from structured transcript
                         if "segments" in chunk_data:
                             all_segments.extend(chunk_data["segments"])
                 
                 audio_chunks_ref.append(f"chunk_{i}.aac")
         
+        # Create merged transcript from all segments
         merged_text = "\n".join([
             f"[{seg.get('timestamp', '')}] {seg.get('speaker', 'Unknown')}: {seg.get('content', '')}"
             for seg in all_segments
         ])
         
+        # --- Layer 1: Raw Event ---
         event = MeetingEvent(
             meeting_id=meeting_id,
             client_id=client_id,
@@ -208,21 +218,29 @@ async def merge_and_summarize_task_v2(ctx: Dict[str, Any], client_id: str, meeti
         )
         storage.save_raw_event(event)
         
+        # --- Layer 2: Meeting Intelligence ---
         meeting_agent = MeetingAgent(api_key=settings.gemini_api_key)
         insight = await meeting_agent.analyze(merged_text, meeting_id)
         storage.save_meeting_insight(client_id, insight)
         
+        # --- Layer 3: Client Memory ---
         current_memory = storage.load_client_memory(client_id)
         
         memory_agent = MemoryAgent(api_key=settings.gemini_api_key)
         updated_memory = await memory_agent.update_memory(current_memory, insight)
         
+        # Hydrate meta fields
         updated_memory.last_updated_from_meeting_id = meeting_id
         
         storage.save_client_memory(updated_memory)
+        
+        # Store result in Redis for API retrieval
         redis = ctx["redis"]
         result_key = f"v2:meeting:{client_id}:{meeting_id}:result"
+        # Store the insight for backward compatibility with API
         await redis.set(result_key, insight.model_dump_json())
+        
+        # Store structured segments separately for additional analysis
         segments_key = f"v2:meeting:{client_id}:{meeting_id}:segments"
         await redis.set(segments_key, json.dumps(all_segments))
         
@@ -243,7 +261,9 @@ async def merge_and_summarize_task_v2(ctx: Dict[str, Any], client_id: str, meeti
 
 def create_redis_settings() -> RedisSettings:
     """Helper to create RedisSettings with correct parameters."""
+    # Use 127.0.0.1 directly to avoid localhost lookup issues
     settings = RedisSettings.from_dsn(REDIS_URL.replace("localhost", "127.0.0.1"))
+    # Set connection parameters on the settings object
     settings.conn_timeout = 10
     settings.conn_retries = 5
     settings.conn_retry_delay = 1

@@ -2,7 +2,7 @@ from fastapi import APIRouter, File, Form, UploadFile, Request, HTTPException, Q
 from arq.jobs import Job, JobStatus as ArqJobStatus
 from arq.connections import ArqRedis
 
-from models.schemas import MeetingOutput, JobSubmission, JobStatus, ChunkUploadResponse, UploadAckResponse
+from v1.models.schemas import MeetingOutput, JobSubmission, JobStatus, ChunkUploadResponse, UploadAckResponse
 from services.audio_service import save_upload_file, save_chunk_file
 
 router = APIRouter()
