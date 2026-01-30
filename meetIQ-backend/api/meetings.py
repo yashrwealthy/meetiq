@@ -124,6 +124,9 @@ async def upload_chunk(
                 meeting_id,
                 total_chunks
             )
+
+            job_key = f"meeting:{client_id}:{meeting_id}:job_id"
+            await redis.set(job_key, job.job_id)
              
             return ChunkUploadResponse(
                 client_id=client_id,
@@ -163,6 +166,13 @@ async def ack_upload(
         missing_ids.sort()
         
         status = "complete" if not missing_ids else "incomplete"
+
+        job_id = None
+        if status == "complete":
+            job_key = f"meeting:{client_id}:{meeting_id}:job_id"
+            job_id_bytes = await redis.get(job_key)
+            if job_id_bytes:
+                job_id = job_id_bytes.decode('utf-8') if isinstance(job_id_bytes, bytes) else job_id_bytes
         
         return UploadAckResponse(
             client_id=client_id,
@@ -170,7 +180,8 @@ async def ack_upload(
             total_chunks=total_chunks,
             received_chunks_count=count,
             missing_chunks=missing_ids,
-            status=status
+            status=status,
+            job_id=job_id
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
