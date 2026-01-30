@@ -40,5 +40,6 @@ class UploadAckResponse(BaseModel):
     received_chunks_count: int
     missing_chunks: List[int]
     status: Literal["complete", "incomplete"]
+    job_id: Optional[str] = None
 
 
