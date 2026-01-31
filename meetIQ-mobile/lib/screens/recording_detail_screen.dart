@@ -10,7 +10,9 @@ import '../models/action_item.dart';
 import '../models/follow_up.dart';
 import '../models/meeting.dart';
 import '../services/audio_player_service.dart';
+import '../services/graphql_service.dart';
 import '../services/storage_service.dart';
+import '../services/user_service.dart';
 import '../utils/calendar_utils.dart';
 import '../widgets/primary_button.dart';
 
@@ -30,6 +32,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
   final StorageService _storageService = StorageService();
   
   Meeting? _meeting;
+  UserProfile? _profile;
   bool _isPlaying = false;
   bool _isLoading = true;
   bool _isSaving = false;
@@ -57,12 +60,33 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
   @override
   void initState() {
     super.initState();
+    _loadProfile();
     _loadMeeting();
     _playingSubscription = _audioPlayer.playingStream.listen((isPlaying) {
       if (mounted) {
         setState(() => _isPlaying = isPlaying);
       }
     });
+  }
+
+  Future<void> _loadProfile() async {
+    final userService = Get.find<UserService>();
+    final partnerToken = await userService.getPartnerToken();
+    final clientId = await userService.getCurrentUserId();
+
+    if (partnerToken != null && clientId != null && partnerToken.isNotEmpty) {
+      final profile = await GraphQLService().fetchUserProfile(
+        partnerToken: partnerToken,
+        clientId: clientId,
+      );
+      if (profile != null && mounted) {
+        setState(() => _profile = profile);
+        return;
+      }
+    }
+    if (mounted) {
+      setState(() => _profile = UserProfile.demo());
+    }
   }
 
   Future<void> _loadMeeting() async {
@@ -308,12 +332,25 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
                         Text(
-                          meeting.clientName,
+                          meeting.clientName.isEmpty || meeting.clientName == 'Client' 
+                              ? (_profile?.name ?? 'Default Client')
+                              : meeting.clientName,
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 24,
                             fontWeight: FontWeight.bold,
                           ),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Icon(Icons.tag, color: Colors.white.withAlpha(179), size: 14),
+                            const SizedBox(width: 4),
+                            Text(
+                              meeting.id,
+                              style: TextStyle(color: Colors.white.withAlpha(179), fontSize: 12),
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 4),
                         Row(
