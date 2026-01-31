@@ -138,3 +138,56 @@ class StorageService:
             with open(file_path, "w") as f:
                 f.write(memory.model_dump_json(indent=2))
             logger.info(f"Updated Client Memory at {file_path}")
+
+    def load_meeting_insight(self, client_id: str, meeting_id: str) -> Optional[MeetingInsight]:
+        """Load a specific meeting insight by client_id and meeting_id."""
+        path = self._get_meeting_dir(client_id, meeting_id)
+        if self.use_s3:
+            key = f"{path}/meeting_insight.json"
+            data = self._s3_download_json(key)
+            if data:
+                return MeetingInsight(**data)
+        else:
+            file_path = os.path.join(path, "meeting_insight.json")
+            if os.path.exists(file_path):
+                with open(file_path, "r") as f:
+                    try:
+                        data = json.load(f)
+                        return MeetingInsight(**data)
+                    except Exception as e:
+                        logger.warning(f"Failed to load meeting insight for {meeting_id}: {e}")
+        return None
+
+    def list_meeting_ids(self, client_id: str) -> list[str]:
+        """List all meeting IDs for a given client."""
+        path = self._get_client_dir(client_id)
+        meeting_ids = []
+        
+        if self.use_s3:
+            try:
+                # List objects under the client prefix
+                paginator = self.s3_client.get_paginator('list_objects_v2')
+                pages = paginator.paginate(Bucket=self.bucket_name, Prefix=f"{path}/", Delimiter='/')
+                
+                for page in pages:
+                    # CommonPrefixes contains directory-like structures
+                    if 'CommonPrefixes' in page:
+                        for prefix in page['CommonPrefixes']:
+                            # Extract meeting_id from prefix like "uploads/client_id/meeting_id/"
+                            meeting_id = prefix['Prefix'].rstrip('/').split('/')[-1]
+                            meeting_ids.append(meeting_id)
+            except ClientError as e:
+                logger.error(f"Error listing meetings for {client_id} from S3: {e}")
+        else:
+            # Local filesystem
+            if os.path.exists(path):
+                try:
+                    for item in os.listdir(path):
+                        item_path = os.path.join(path, item)
+                        # Only include directories, exclude client_memory.json
+                        if os.path.isdir(item_path):
+                            meeting_ids.append(item)
+                except Exception as e:
+                    logger.error(f"Error listing meetings for {client_id} from local: {e}")
+        
+        return meeting_ids
