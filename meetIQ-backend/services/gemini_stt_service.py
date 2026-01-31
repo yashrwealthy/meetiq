@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import time
 import json
+import asyncio
 from typing import Optional, Dict, Any
 from pathlib import Path
 
@@ -59,6 +60,44 @@ def _get_transcription_model() -> str:
     
     settings = Settings()
     return getattr(settings, 'gemini_transcription_model', 'gemini-2.5-flash')
+
+
+async def _wait_for_file_active(client: object, file_name: str, max_attempts: int = 30, delay: float = 1.0) -> bool:
+    """
+    Poll a file until it reaches ACTIVE state.
+    
+    Args:
+        client: Gemini client instance
+        file_name: Name of the uploaded file
+        max_attempts: Maximum number of polling attempts
+        delay: Delay between attempts in seconds
+        
+    Returns:
+        True if file became active, False if timeout
+    """
+    for attempt in range(max_attempts):
+        try:
+            file_info = client.files.get(name=file_name)
+            state = file_info.state
+            print(f"File {file_name} state: {state} (attempt {attempt + 1}/{max_attempts})")
+            
+            if state == "ACTIVE":
+                print(f"File {file_name} is now ACTIVE")
+                return True
+            elif state == "PROCESSING":
+                print(f"File {file_name} is still processing, waiting...")
+            else:
+                print(f"File {file_name} in unexpected state: {state}")
+            
+            if attempt < max_attempts - 1:
+                await __import__('asyncio').sleep(delay)
+        except Exception as e:
+            print(f"Error checking file status: {e}")
+            if attempt < max_attempts - 1:
+                await __import__('asyncio').sleep(delay)
+    
+    print(f"Timeout waiting for file {file_name} to become ACTIVE after {max_attempts} attempts")
+    return False
 
 
 async def transcribe_audio_gemini(file_path: str) -> str:
@@ -121,6 +160,18 @@ async def transcribe_audio_gemini(file_path: str) -> str:
         uploaded_file = client.files.upload(file=local_file_path)
         upload_duration = time.time() - upload_start
         print(f"File uploaded to Gemini in {upload_duration:.2f}s: {uploaded_file.name}")
+        
+        # Wait for file to reach ACTIVE state
+        print(f"Waiting for file {uploaded_file.name} to become ACTIVE...")
+        file_active = await _wait_for_file_active(client, uploaded_file.name, max_attempts=60, delay=0.5)
+        
+        if not file_active:
+            print(f"Error: File {uploaded_file.name} failed to reach ACTIVE state within timeout")
+            try:
+                client.files.delete(name=uploaded_file.name)
+            except Exception:
+                pass
+            return ""
         
         # Get configured model
         model = _get_transcription_model()
