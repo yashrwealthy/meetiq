@@ -20,7 +20,8 @@ class FinancialGoal {
 class ClientMemory {
   final String clientId;
   final Map<String, dynamic> profile;
-  final String riskProfile;
+  final String? clientOverview;
+  final String? riskProfile;
   final List<String> preferredProducts;
   final List<String> disfavoredProducts;
   final List<FinancialGoal> activeFinancialGoals;
@@ -36,7 +37,8 @@ class ClientMemory {
   ClientMemory({
     required this.clientId,
     required this.profile,
-    required this.riskProfile,
+    this.clientOverview,
+    this.riskProfile,
     required this.preferredProducts,
     required this.disfavoredProducts,
     required this.activeFinancialGoals,
@@ -54,7 +56,8 @@ class ClientMemory {
     return ClientMemory(
       clientId: json['client_id'] as String? ?? '',
       profile: json['profile'] as Map<String, dynamic>? ?? {},
-      riskProfile: json['risk_profile'] as String? ?? 'moderate',
+      clientOverview: json['client_overview'] as String?,
+      riskProfile: json['risk_profile'] as String?,
       preferredProducts: (json['preferred_products'] as List<dynamic>? ?? []).cast<String>(),
       disfavoredProducts: (json['disfavored_products'] as List<dynamic>? ?? []).cast<String>(),
       activeFinancialGoals: (json['active_financial_goals'] as List<dynamic>? ?? [])
@@ -73,5 +76,5 @@ class ClientMemory {
   }
 
   /// Check if memory has meaningful data
-  bool get hasData => pendingActionItems.isNotEmpty || lastUpdatedFromMeetingId != null;
+  bool get hasData => pendingActionItems.isNotEmpty || lastUpdatedFromMeetingId != null || (clientOverview != null && clientOverview!.isNotEmpty);
 }

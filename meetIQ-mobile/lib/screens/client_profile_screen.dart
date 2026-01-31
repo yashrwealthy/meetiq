@@ -28,6 +28,10 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
   bool _isLoading = true;
   bool _isMemoryLoading = true;
   int _recordingsCount = 0;
+  
+  // Accordion expansion states
+  bool _isOverviewExpanded = true;
+  bool _isPendingActionsExpanded = true;
 
   @override
   void initState() {
@@ -763,58 +767,111 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
   Widget _buildMemoryContent() {
     final memory = _clientMemory!;
     final pendingItems = memory.pendingActionItems;
-    final displayItems = pendingItems.take(5).toList();  // Show max 5 items
-    final remainingCount = pendingItems.length - displayItems.length;
+    final hasOverview = memory.clientOverview != null && memory.clientOverview!.isNotEmpty;
+    final hasPendingItems = pendingItems.isNotEmpty;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Pending action items
-        ...displayItems.map((item) => _buildBulletPoint(item)),
-        
-        if (remainingCount > 0) ...[
-          const SizedBox(height: 8),
-          Text(
-            '+$remainingCount more action items',
-            style: TextStyle(
-              fontSize: 13,
-              color: Colors.grey.shade500,
-              fontStyle: FontStyle.italic,
+        // Client Overview Accordion
+        if (hasOverview) ...[
+          _buildAccordion(
+            title: 'Client Overview',
+            icon: Icons.person_outline,
+            iconColor: const Color(0xFF1E3A5F),
+            isExpanded: _isOverviewExpanded,
+            onTap: () => setState(() => _isOverviewExpanded = !_isOverviewExpanded),
+            child: Text(
+              memory.clientOverview!,
+              style: const TextStyle(
+                fontSize: 14,
+                color: Color(0xFF37474F),
+                height: 1.5,
+              ),
             ),
           ),
+          const SizedBox(height: 12),
         ],
-        
-        const SizedBox(height: 16),
 
-        // Pending actions banner
-        if (pendingItems.isNotEmpty)
-          GestureDetector(
-            onTap: () => context.go('/recordings'),
+        // Pending Action Items Accordion
+        if (hasPendingItems)
+          _buildAccordion(
+            title: 'Pending Actions (${pendingItems.length})',
+            icon: Icons.checklist,
+            iconColor: Colors.amber.shade700,
+            isExpanded: _isPendingActionsExpanded,
+            onTap: () => setState(() => _isPendingActionsExpanded = !_isPendingActionsExpanded),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: pendingItems.map((item) => _buildBulletPoint(item)).toList(),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildAccordion({
+    required String title,
+    required IconData icon,
+    required Color iconColor,
+    required bool isExpanded,
+    required VoidCallback onTap,
+    required Widget child,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5F7FA),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        children: [
+          // Header
+          InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(12),
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFF8E1),
-                borderRadius: BorderRadius.circular(12),
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               child: Row(
                 children: [
-                  Icon(Icons.error_outline, color: Colors.amber.shade700, size: 20),
-                  const SizedBox(width: 12),
+                  Icon(icon, color: iconColor, size: 20),
+                  const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      '${pendingItems.length} pending action${pendingItems.length > 1 ? 's' : ''} from meetings',
+                      title,
                       style: const TextStyle(
-                        fontSize: 13,
-                        color: Color(0xFF5D4037),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF1E3A5F),
                       ),
                     ),
                   ),
-                  Icon(Icons.chevron_right, color: Colors.grey.shade400),
+                  AnimatedRotation(
+                    turns: isExpanded ? 0.5 : 0,
+                    duration: const Duration(milliseconds: 200),
+                    child: Icon(
+                      Icons.keyboard_arrow_down,
+                      color: Colors.grey.shade600,
+                      size: 24,
+                    ),
+                  ),
                 ],
               ),
             ),
           ),
-      ],
+          // Content
+          AnimatedCrossFade(
+            firstChild: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: child,
+            ),
+            secondChild: const SizedBox(width: double.infinity),
+            crossFadeState: isExpanded ? CrossFadeState.showFirst : CrossFadeState.showSecond,
+            duration: const Duration(milliseconds: 200),
+          ),
+        ],
+      ),
     );
   }
 
