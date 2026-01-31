@@ -217,5 +217,33 @@ class StorageService {
     
     await saveMetadata(recordingId, data);
   }
+  
+  /// Update client intent
+  Future<void> updateClientIntent(String recordingId, String clientIntent) async {
+    final data = await loadMetadata(recordingId);
+    data['client_intent'] = clientIntent;
+    await saveMetadata(recordingId, data);
+  }
+  
+  /// Update meeting summary
+  Future<void> updateMeetingSummary(String recordingId, List<String> summary) async {
+    final data = await loadMetadata(recordingId);
+    data['meeting_summary'] = summary;
+    await saveMetadata(recordingId, data);
+  }
+  
+  /// Update action items
+  Future<void> updateActionItems(String recordingId, List<ActionItem> actionItems) async {
+    final data = await loadMetadata(recordingId);
+    data['action_items'] = actionItems.map((item) => item.toJson()).toList();
+    await saveMetadata(recordingId, data);
+  }
+  
+  /// Update follow-ups
+  Future<void> updateFollowUps(String recordingId, List<FollowUp> followUps) async {
+    final data = await loadMetadata(recordingId);
+    data['follow_ups'] = followUps.map((item) => item.toJson()).toList();
+    await saveMetadata(recordingId, data);
+  }
 }
 

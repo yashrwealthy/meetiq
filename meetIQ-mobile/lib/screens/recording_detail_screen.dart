@@ -6,8 +6,11 @@ import 'package:go_router/go_router.dart';
 
 import '../controllers/meetings_controller.dart';
 import '../controllers/upload_controller.dart';
+import '../models/action_item.dart';
+import '../models/follow_up.dart';
 import '../models/meeting.dart';
 import '../services/audio_player_service.dart';
+import '../services/storage_service.dart';
 import '../utils/calendar_utils.dart';
 import '../widgets/primary_button.dart';
 
@@ -24,11 +27,25 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
   final AudioPlayerService _audioPlayer = AudioPlayerService();
   final MeetingsController _meetingsController = Get.find<MeetingsController>();
   final UploadController _uploadController = Get.find<UploadController>();
+  final StorageService _storageService = StorageService();
   
   Meeting? _meeting;
   bool _isPlaying = false;
   bool _isLoading = true;
+  bool _isSaving = false;
   StreamSubscription<bool>? _playingSubscription;
+  
+  // Edit mode states
+  bool _isEditingClientIntent = false;
+  bool _isEditingSummary = false;
+  bool _isEditingActionItems = false;
+  bool _isEditingFollowUps = false;
+  
+  // Editable data
+  String _editedClientIntent = '';
+  List<String> _editedSummary = [];
+  List<ActionItem> _editedActionItems = [];
+  List<FollowUp> _editedFollowUps = [];
 
   // Colors
   static const Color primaryBlue = Color(0xFF1E3A8A);
@@ -50,9 +67,18 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
 
   Future<void> _loadMeeting() async {
     await _meetingsController.loadMeetings();
+    final meeting = _meetingsController.meetings.firstWhereOrNull((m) => m.id == widget.meetingId);
     setState(() {
-      _meeting = _meetingsController.meetings.firstWhereOrNull((m) => m.id == widget.meetingId);
+      _meeting = meeting;
       _isLoading = false;
+      
+      // Initialize editable data
+      if (meeting != null) {
+        _editedClientIntent = meeting.clientIntent;
+        _editedSummary = List.from(meeting.summary);
+        _editedActionItems = meeting.actionItems.map((a) => ActionItem(id: a.id, text: a.text, completed: a.completed)).toList();
+        _editedFollowUps = meeting.followUps.map((f) => FollowUp(id: f.id, text: f.text, dueDate: f.dueDate)).toList();
+      }
     });
   }
 
@@ -89,6 +115,98 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
       await _audioPlayer.playMeeting(widget.meetingId);
       setState(() => _isPlaying = true);
     }
+  }
+  
+  Future<void> _saveClientIntent() async {
+    setState(() => _isSaving = true);
+    try {
+      await _storageService.updateClientIntent(widget.meetingId, _editedClientIntent);
+      await _loadMeeting();
+      setState(() => _isEditingClientIntent = false);
+      _showSuccessSnackBar('Client intent saved');
+    } catch (e) {
+      _showErrorSnackBar('Failed to save: $e');
+    } finally {
+      setState(() => _isSaving = false);
+    }
+  }
+  
+  Future<void> _saveSummary() async {
+    setState(() => _isSaving = true);
+    try {
+      await _storageService.updateMeetingSummary(widget.meetingId, _editedSummary);
+      await _loadMeeting();
+      setState(() => _isEditingSummary = false);
+      _showSuccessSnackBar('Meeting summary saved');
+    } catch (e) {
+      _showErrorSnackBar('Failed to save: $e');
+    } finally {
+      setState(() => _isSaving = false);
+    }
+  }
+  
+  Future<void> _saveActionItems() async {
+    setState(() => _isSaving = true);
+    try {
+      await _storageService.updateActionItems(widget.meetingId, _editedActionItems);
+      await _loadMeeting();
+      setState(() => _isEditingActionItems = false);
+      _showSuccessSnackBar('Action items saved');
+    } catch (e) {
+      _showErrorSnackBar('Failed to save: $e');
+    } finally {
+      setState(() => _isSaving = false);
+    }
+  }
+  
+  Future<void> _saveFollowUps() async {
+    setState(() => _isSaving = true);
+    try {
+      await _storageService.updateFollowUps(widget.meetingId, _editedFollowUps);
+      await _loadMeeting();
+      setState(() => _isEditingFollowUps = false);
+      _showSuccessSnackBar('Follow-ups saved');
+    } catch (e) {
+      _showErrorSnackBar('Failed to save: $e');
+    } finally {
+      setState(() => _isSaving = false);
+    }
+  }
+  
+  void _showSuccessSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle, color: Colors.white),
+            const SizedBox(width: 8),
+            Text(message),
+          ],
+        ),
+        backgroundColor: successGreen,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+  
+  void _showErrorSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.white),
+            const SizedBox(width: 8),
+            Expanded(child: Text(message)),
+          ],
+        ),
+        backgroundColor: errorRed,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
   }
 
   Future<void> _uploadRecording() async {
@@ -804,10 +922,49 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
   }
 
   Widget _buildClientIntentCard(Meeting meeting) {
+    if (_isEditingClientIntent) {
+      return _buildEditableCard(
+        icon: Icons.psychology,
+        iconColor: const Color(0xFF8B5CF6),
+        title: 'Client Intent',
+        onSave: _saveClientIntent,
+        onCancel: () {
+          setState(() {
+            _editedClientIntent = meeting.clientIntent;
+            _isEditingClientIntent = false;
+          });
+        },
+        child: TextField(
+          controller: TextEditingController(text: _editedClientIntent),
+          onChanged: (value) => _editedClientIntent = value,
+          maxLines: 4,
+          decoration: InputDecoration(
+            hintText: 'Enter client intent...',
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(color: Colors.grey[300]!),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(color: Colors.grey[300]!),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: const BorderSide(color: Color(0xFF8B5CF6)),
+            ),
+            filled: true,
+            fillColor: Colors.grey[50],
+          ),
+          style: const TextStyle(fontSize: 15, height: 1.5),
+        ),
+      );
+    }
+    
     return _buildSectionCard(
       icon: Icons.psychology,
       iconColor: const Color(0xFF8B5CF6),
       title: 'Client Intent',
+      onEdit: () => setState(() => _isEditingClientIntent = true),
       child: Text(
         meeting.clientIntent,
         style: const TextStyle(fontSize: 15, height: 1.5),
@@ -816,10 +973,96 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
   }
 
   Widget _buildSummaryCard(Meeting meeting) {
+    if (_isEditingSummary) {
+      return _buildEditableCard(
+        icon: Icons.summarize,
+        iconColor: lightBlue,
+        title: 'Meeting Summary',
+        onSave: _saveSummary,
+        onCancel: () {
+          setState(() {
+            _editedSummary = List.from(meeting.summary);
+            _isEditingSummary = false;
+          });
+        },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ...List.generate(_editedSummary.length, (index) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      margin: const EdgeInsets.only(top: 14),
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: lightBlue,
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: TextEditingController(text: _editedSummary[index]),
+                        onChanged: (value) => _editedSummary[index] = value,
+                        maxLines: 2,
+                        decoration: InputDecoration(
+                          hintText: 'Summary point...',
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: BorderSide(color: Colors.grey[300]!),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: BorderSide(color: Colors.grey[300]!),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: const BorderSide(color: lightBlue),
+                          ),
+                          filled: true,
+                          fillColor: Colors.grey[50],
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        ),
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.remove_circle, color: errorRed, size: 20),
+                      onPressed: () {
+                        setState(() {
+                          _editedSummary.removeAt(index);
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              );
+            }),
+            const SizedBox(height: 8),
+            TextButton.icon(
+              onPressed: () {
+                setState(() {
+                  _editedSummary.add('');
+                });
+              },
+              icon: const Icon(Icons.add_circle, size: 18),
+              label: const Text('Add point'),
+              style: TextButton.styleFrom(foregroundColor: lightBlue),
+            ),
+          ],
+        ),
+      );
+    }
+    
     return _buildSectionCard(
       icon: Icons.summarize,
       iconColor: lightBlue,
       title: 'Meeting Summary',
+      onEdit: () => setState(() => _isEditingSummary = true),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: meeting.summary.map((point) {
@@ -850,10 +1093,113 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
   }
 
   Widget _buildActionItemsCard(Meeting meeting) {
+    if (_isEditingActionItems) {
+      return _buildEditableCard(
+        icon: Icons.checklist,
+        iconColor: warningOrange,
+        title: 'Action Items',
+        onSave: _saveActionItems,
+        onCancel: () {
+          setState(() {
+            _editedActionItems = meeting.actionItems.map((a) => ActionItem(id: a.id, text: a.text, completed: a.completed)).toList();
+            _isEditingActionItems = false;
+          });
+        },
+        child: Column(
+          children: [
+            ...List.generate(_editedActionItems.length, (index) {
+              final item = _editedActionItems[index];
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.grey[50],
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.grey[200]!),
+                ),
+                child: Row(
+                  children: [
+                    Checkbox(
+                      value: item.completed,
+                      onChanged: (value) {
+                        setState(() {
+                          _editedActionItems[index] = ActionItem(
+                            id: item.id,
+                            text: item.text,
+                            completed: value ?? false,
+                          );
+                        });
+                      },
+                      activeColor: successGreen,
+                    ),
+                    Expanded(
+                      child: TextField(
+                        controller: TextEditingController(text: item.text),
+                        onChanged: (value) {
+                          _editedActionItems[index] = ActionItem(
+                            id: item.id,
+                            text: value,
+                            completed: item.completed,
+                          );
+                        },
+                        decoration: InputDecoration(
+                          hintText: 'Action item...',
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: BorderSide(color: Colors.grey[300]!),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: BorderSide(color: Colors.grey[300]!),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            borderSide: const BorderSide(color: warningOrange),
+                          ),
+                          filled: true,
+                          fillColor: Colors.white,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        ),
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.remove_circle, color: errorRed, size: 20),
+                      onPressed: () {
+                        setState(() {
+                          _editedActionItems.removeAt(index);
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              );
+            }),
+            const SizedBox(height: 8),
+            TextButton.icon(
+              onPressed: () {
+                setState(() {
+                  _editedActionItems.add(ActionItem(
+                    id: DateTime.now().millisecondsSinceEpoch.toString(),
+                    text: '',
+                    completed: false,
+                  ));
+                });
+              },
+              icon: const Icon(Icons.add_circle, size: 18),
+              label: const Text('Add action item'),
+              style: TextButton.styleFrom(foregroundColor: warningOrange),
+            ),
+          ],
+        ),
+      );
+    }
+    
     return _buildSectionCard(
       icon: Icons.checklist,
       iconColor: warningOrange,
       title: 'Action Items',
+      onEdit: () => setState(() => _isEditingActionItems = true),
       child: Column(
         children: meeting.actionItems.map((item) {
           return Container(
@@ -898,10 +1244,140 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
   }
 
   Widget _buildFollowUpsCard(Meeting meeting) {
+    if (_isEditingFollowUps) {
+      return _buildEditableCard(
+        icon: Icons.event,
+        iconColor: const Color(0xFFEC4899),
+        title: 'Follow-up Items',
+        onSave: _saveFollowUps,
+        onCancel: () {
+          setState(() {
+            _editedFollowUps = meeting.followUps.map((f) => FollowUp(id: f.id, text: f.text, dueDate: f.dueDate)).toList();
+            _isEditingFollowUps = false;
+          });
+        },
+        child: Column(
+          children: [
+            ...List.generate(_editedFollowUps.length, (index) {
+              final followUp = _editedFollowUps[index];
+              final dueDate = followUp.dueDate != null ? DateTime.tryParse(followUp.dueDate!) : null;
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [const Color(0xFFEC4899).withAlpha(13), const Color(0xFFEC4899).withAlpha(26)],
+                  ),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFEC4899).withAlpha(51)),
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: TextEditingController(text: followUp.text),
+                            onChanged: (value) {
+                              _editedFollowUps[index] = FollowUp(
+                                id: followUp.id,
+                                text: value,
+                                dueDate: followUp.dueDate,
+                              );
+                            },
+                            maxLines: 2,
+                            decoration: InputDecoration(
+                              hintText: 'Follow-up item...',
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: BorderSide(color: Colors.grey[300]!),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: BorderSide(color: Colors.grey[300]!),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: const BorderSide(color: Color(0xFFEC4899)),
+                              ),
+                              filled: true,
+                              fillColor: Colors.white,
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            ),
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                        ),
+                        IconButton(
+                          icon: Icon(Icons.remove_circle, color: errorRed, size: 20),
+                          onPressed: () {
+                            setState(() {
+                              _editedFollowUps.removeAt(index);
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        const Icon(Icons.calendar_today, size: 14, color: Color(0xFFEC4899)),
+                        const SizedBox(width: 8),
+                        TextButton(
+                          onPressed: () async {
+                            final selectedDate = await showDatePicker(
+                              context: context,
+                              initialDate: dueDate ?? DateTime.now().add(const Duration(days: 1)),
+                              firstDate: DateTime.now(),
+                              lastDate: DateTime.now().add(const Duration(days: 365)),
+                            );
+                            if (selectedDate != null) {
+                              setState(() {
+                                _editedFollowUps[index] = FollowUp(
+                                  id: followUp.id,
+                                  text: followUp.text,
+                                  dueDate: selectedDate.toIso8601String(),
+                                );
+                              });
+                            }
+                          },
+                          child: Text(
+                            dueDate != null
+                                ? '${dueDate.day}/${dueDate.month}/${dueDate.year}'
+                                : 'Set due date',
+                            style: const TextStyle(color: Color(0xFFEC4899)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            }),
+            const SizedBox(height: 8),
+            TextButton.icon(
+              onPressed: () {
+                setState(() {
+                  _editedFollowUps.add(FollowUp(
+                    id: DateTime.now().millisecondsSinceEpoch.toString(),
+                    text: '',
+                    dueDate: DateTime.now().add(const Duration(days: 1)).toIso8601String(),
+                  ));
+                });
+              },
+              icon: const Icon(Icons.add_circle, size: 18),
+              label: const Text('Add follow-up'),
+              style: TextButton.styleFrom(foregroundColor: const Color(0xFFEC4899)),
+            ),
+          ],
+        ),
+      );
+    }
+    
     return _buildSectionCard(
       icon: Icons.event,
       iconColor: const Color(0xFFEC4899),
       title: 'Follow-up Items',
+      onEdit: () => setState(() => _isEditingFollowUps = true),
       child: Column(
         children: meeting.followUps.map((followUp) {
           return Container(
@@ -1028,6 +1504,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     required Color iconColor,
     required String title,
     required Widget child,
+    VoidCallback? onEdit,
   }) {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -1056,14 +1533,117 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                 child: Icon(icon, color: iconColor, size: 20),
               ),
               const SizedBox(width: 12),
-              Text(
-                title,
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+              ),
+              if (onEdit != null)
+                IconButton(
+                  onPressed: onEdit,
+                  icon: Icon(Icons.edit, color: iconColor, size: 20),
+                  tooltip: 'Edit $title',
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          child,
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildEditableCard({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required Widget child,
+    required VoidCallback onSave,
+    required VoidCallback onCancel,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: iconColor.withAlpha(128), width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withAlpha(13),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: iconColor.withAlpha(26),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: iconColor, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: iconColor.withAlpha(26),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  'Editing',
+                  style: TextStyle(
+                    color: iconColor,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
             ],
           ),
           const SizedBox(height: 16),
           child,
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: onCancel,
+                child: Text('Cancel', style: TextStyle(color: Colors.grey[600])),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: _isSaving ? null : onSave,
+                icon: _isSaving
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.save, size: 18),
+                label: Text(_isSaving ? 'Saving...' : 'Save'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: iconColor,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
