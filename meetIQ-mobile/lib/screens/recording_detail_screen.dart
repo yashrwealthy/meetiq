@@ -901,7 +901,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
     return _buildSectionCard(
       icon: Icons.event,
       iconColor: const Color(0xFFEC4899),
-      title: 'Follow-up Reminders',
+      title: 'Follow-up Items',
       child: Column(
         children: meeting.followUps.map((followUp) {
           return Container(
@@ -916,31 +916,33 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
             ),
             child: Row(
               children: [
-                const Icon(Icons.calendar_today, size: 20, color: Color(0xFFEC4899)),
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEC4899).withAlpha(26),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Icon(Icons.flag_outlined, size: 18, color: Color(0xFFEC4899)),
+                ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        followUp.text,
-                        style: const TextStyle(fontWeight: FontWeight.w500),
-                      ),
-                      if (followUp.dueDate != null)
-                        Text(
-                          followUp.dueDate!,
-                          style: TextStyle(color: Colors.grey[600], fontSize: 12),
-                        ),
-                    ],
+                  child: Text(
+                    followUp.text,
+                    style: const TextStyle(fontSize: 14, height: 1.4),
                   ),
                 ),
-                TextButton(
-                  onPressed: () => openCalendar(followUp.dueDate),
-                  style: TextButton.styleFrom(
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: () => openCalendarWithFollowUp(followUp.text, date: followUp.dueDate),
+                  icon: const Icon(Icons.calendar_today, size: 14),
+                  label: const Text('Add to Calendar'),
+                  style: OutlinedButton.styleFrom(
                     foregroundColor: const Color(0xFFEC4899),
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    side: const BorderSide(color: Color(0xFFEC4899)),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    textStyle: const TextStyle(fontSize: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                   ),
-                  child: const Text('Add'),
                 ),
               ],
             ),

@@ -4,6 +4,7 @@
   final String? clientIntent;
   final List<String> meetingSummary;
   final List<String> actionItems;
+  final List<String> followUps;
   final String? followUpDate;
   final String confidenceLevel;
 
@@ -13,6 +14,7 @@
     required this.clientIntent,
     required this.meetingSummary,
     required this.actionItems,
+    required this.followUps,
     required this.followUpDate,
     required this.confidenceLevel,
   });
@@ -24,6 +26,7 @@
       clientIntent: json['client_intent'] as String?,
       meetingSummary: (json['meeting_summary'] as List<dynamic>? ?? []).cast<String>(),
       actionItems: (json['action_items'] as List<dynamic>? ?? []).cast<String>(),
+      followUps: (json['follow_ups'] as List<dynamic>? ?? []).cast<String>(),
       followUpDate: json['follow_up_date'] as String?,
       confidenceLevel: json['confidence_level'] as String? ?? 'low',
     );
@@ -36,6 +39,7 @@
       'client_intent': clientIntent,
       'meeting_summary': meetingSummary,
       'action_items': actionItems,
+      'follow_ups': followUps,
       'follow_up_date': followUpDate,
       'confidence_level': confidenceLevel,
     };

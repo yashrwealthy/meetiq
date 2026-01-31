@@ -194,15 +194,15 @@ class StorageService {
     data['action_items'] = result.actionItems
         .map((text) => ActionItem(id: text.hashCode.toString(), text: text).toJson())
         .toList();
-    data['follow_ups'] = result.followUpDate == null
-        ? []
-        : [
-            FollowUp(
-              id: result.followUpDate!,
-              text: 'Review meeting follow-up',
+    
+    // Save follow-ups from API (list of strings)
+    data['follow_ups'] = result.followUps
+        .map((text) => FollowUp(
+              id: text.hashCode.toString(),
+              text: text,
               dueDate: result.followUpDate,
-            ).toJson(),
-          ];
+            ).toJson())
+        .toList();
     
     // New fields from API
     data['is_financial_meeting'] = result.isFinancialMeeting;

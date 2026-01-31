@@ -308,6 +308,7 @@ class UploadController extends GetxController {
           clientIntent: null,
           meetingSummary: ['Processing completed but no summary available'],
           actionItems: [],
+          followUps: [],
           followUpDate: null,
           confidenceLevel: 'low',
         );
