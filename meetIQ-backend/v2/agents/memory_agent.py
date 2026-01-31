@@ -39,6 +39,7 @@ class MemoryAgent:
         6. Determine 'decision_confidence_trend' by comparing current sentiment to past behavior.
            ALLOWED VALUES: "increasing", "stable", "decreasing".
         7. 'pending_action_items' should be a merged list of old incomplete items + new ones (remove completed).
+        8. PRESERVE the existing 'client_overview' field as-is. Do NOT modify it - this is handled by a specialized agent.
         
         INPUTS:
         
@@ -49,7 +50,13 @@ class MemoryAgent:
         {insight_json}
         
         TASK:
-        Generate the NEW ClientMemory JSON object. merging the insights into the memory.
+        Generate the NEW ClientMemory JSON object merging the insights into the memory.
+        
+        REQUIRED FIELDS TO UPDATE:
+        - profile: Extract any personal/professional details mentioned.
+        - active_financial_goals, discussed_products, decision_confidence_trend, etc.
+        - client_overview: PRESERVE the existing value, do not generate or modify.
+        
         Return ONLY valid JSON matching the ClientMemory schema.
         """
 
@@ -89,6 +96,10 @@ class MemoryAgent:
             # Fix profile field: ensure all values are strings (convert int to str)
             if "profile" in data and isinstance(data["profile"], dict):
                 data["profile"] = {k: str(v) if v is not None else "" for k, v in data["profile"].items()}
+            
+            # Preserve existing client_overview if model removes it
+            if "client_overview" not in data or data["client_overview"] is None:
+                data["client_overview"] = current_memory.client_overview
             
             # Fix risk_profile: if it's a dict, convert to string representation or extract text
             if "risk_profile" in data and isinstance(data["risk_profile"], dict):
