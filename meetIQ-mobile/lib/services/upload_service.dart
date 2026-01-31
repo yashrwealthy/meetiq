@@ -98,8 +98,21 @@ class JobStatusResponse {
 
 class UploadService {
   final String baseUrl;
+  
+  // Flag to stop polling when user navigates away
+  bool _shouldStopPolling = false;
 
   UploadService({required this.baseUrl});
+
+  /// Stop any ongoing polling
+  void stopPolling() {
+    _shouldStopPolling = true;
+  }
+
+  /// Reset polling state for new operations
+  void resetPolling() {
+    _shouldStopPolling = false;
+  }
 
   /// Upload a single chunk to the server
   Future<ChunkUploadResponse?> uploadChunk({
@@ -163,40 +176,81 @@ class UploadService {
   }
 
   /// Acknowledge upload completion and start processing
+  /// Polls until status is 'complete' or 'failed' (backend may be uploading to S3)
   Future<AckUploadResponse?> acknowledgeUpload({
     required String clientId,
     required String meetingId,
     required int totalChunks,
+    int maxAttempts = 60,  // 3 minutes max (3s * 60)
+    Duration pollInterval = const Duration(seconds: 3),
   }) async {
-    try {
-      final uri = Uri.parse('$baseUrl/meetings/ack_upload')
-          .replace(queryParameters: {
-        'client_id': clientId,
-        'meeting_id': meetingId,
-        'total_chunks': totalChunks.toString(),
-      });
-
-      debugPrint('Acknowledging upload: $uri');
-      final response = await http.get(uri);
-      
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        debugPrint('Ack response: $data');
-        return AckUploadResponse.fromJson(data);
-      } else {
-        debugPrint('Ack failed: ${response.statusCode} - ${response.body}');
+    for (int attempt = 0; attempt < maxAttempts; attempt++) {
+      // Check if polling should stop (user navigated away)
+      if (_shouldStopPolling) {
+        debugPrint('Ack polling stopped by user at attempt ${attempt + 1}');
         return null;
       }
-    } catch (e) {
-      debugPrint('Ack error: $e');
-      return null;
+
+      try {
+        final uri = Uri.parse('$baseUrl/meetings/ack')
+            .replace(queryParameters: {
+          'client_id': clientId,
+          'meeting_id': meetingId,
+          'total_chunks': totalChunks.toString(),
+        });
+
+        debugPrint('Acknowledging upload (attempt ${attempt + 1}/$maxAttempts): $uri');
+        final response = await http.get(uri);
+        
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          final data = jsonDecode(response.body) as Map<String, dynamic>;
+          debugPrint('Ack response: $data');
+          final ackResponse = AckUploadResponse.fromJson(data);
+          
+          // Check if upload to S3 is complete
+          final status = ackResponse.status.toLowerCase();
+          if (status == 'complete' || status == 'completed') {
+            debugPrint('Ack complete - all chunks uploaded to S3');
+            return ackResponse;
+          } else if (status == 'failed' || status == 'error') {
+            debugPrint('Ack failed: $status');
+            return ackResponse;  // Return the failed response so caller can handle
+          } else if (status == 'incomplete' || status == 'processing' || status == 'uploading') {
+            // Still uploading to S3, continue polling
+            debugPrint('Ack status: $status - waiting for S3 upload to complete...');
+            await Future.delayed(pollInterval);
+            continue;
+          } else {
+            // Unknown status, treat as complete for backwards compatibility
+            debugPrint('Ack unknown status: $status - treating as complete');
+            return ackResponse;
+          }
+        } else {
+          debugPrint('Ack failed: ${response.statusCode} - ${response.body}');
+          // Retry on server errors
+          if (response.statusCode >= 500) {
+            await Future.delayed(pollInterval);
+            continue;
+          }
+          return null;
+        }
+      } catch (e) {
+        debugPrint('Ack error: $e');
+        // Retry on network errors
+        await Future.delayed(pollInterval);
+        continue;
+      }
     }
+
+    debugPrint('Ack polling timed out after $maxAttempts attempts');
+    return null;
   }
 
   /// Check job processing status
   Future<JobStatusResponse?> checkJobStatus(String jobId) async {
     try {
-      final uri = Uri.parse('$baseUrl/meetings/status/$jobId');
+      final uri = Uri.parse('$baseUrl/meetings/status')
+          .replace(queryParameters: {'job_id': jobId});
       debugPrint('Checking job status: $uri');
       final response = await http.get(uri);
       

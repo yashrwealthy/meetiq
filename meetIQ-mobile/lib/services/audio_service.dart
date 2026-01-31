@@ -81,6 +81,8 @@ class AudioService {
     }
     
     // Reset state after stopping
+    _startTime = null;
+    _chunkIndex = 0;
     _currentMeetingId = null;
     _currentStorage = null;
     _onChunkStarted = null;
@@ -102,6 +104,8 @@ class AudioService {
     await storage.deleteMeeting(meetingId);
     
     // Reset state
+    _startTime = null;
+    _chunkIndex = 0;
     _currentMeetingId = null;
     _currentStorage = null;
     _onChunkStarted = null;

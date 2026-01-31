@@ -55,7 +55,7 @@ class RecordingController extends GetxController {
     try {
       await _audioService.startMeeting(
         meetingId: id,
-        chunkDuration: const Duration(seconds: 5),  // TODO: Change back to minutes: 5 for production
+        chunkDuration: const Duration(minutes: 1),
         storage: _storageService,
         onChunkStarted: (index) => chunkIndex.value = index,
       );
@@ -86,6 +86,8 @@ class RecordingController extends GetxController {
     _timer?.cancel();
     _amplitudeTimer?.cancel();
     await _audioService.stopMeeting(recordingId.value, _storageService);
+    // Update duration with the controller's tracked elapsed time for accuracy
+    await _storageService.setDuration(recordingId.value, elapsedSeconds.value);
   }
 
   /// Cancel the recording without saving

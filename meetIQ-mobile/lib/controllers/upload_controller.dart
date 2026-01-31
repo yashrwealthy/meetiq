@@ -10,7 +10,7 @@ import '../services/user_service.dart';
 class UploadController extends GetxController {
   final StorageService _storageService = StorageService();
   final NetworkService _networkService = NetworkService();
-  final UploadService _uploadService = UploadService(baseUrl: 'http://192.168.1.87:8000');
+  final UploadService _uploadService = UploadService(baseUrl: 'https://listen-supervisor-motors-letter.trycloudflare.com/v2');
   UserService get _userService => Get.find<UserService>();
 
   final isUploading = false.obs;
@@ -29,11 +29,13 @@ class UploadController extends GetxController {
   void stopPolling() {
     debugPrint('UploadController: Stopping polling');
     _shouldStopPolling = true;
+    _uploadService.stopPolling();  // Also stop upload service polling
   }
   
   /// Reset polling state for new operations
   void _resetPollingState() {
     _shouldStopPolling = false;
+    _uploadService.resetPolling();  // Also reset upload service polling
   }
 
   Future<bool> uploadMeeting(String meetingId) async {

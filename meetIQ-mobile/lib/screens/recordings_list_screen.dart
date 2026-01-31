@@ -370,17 +370,20 @@ class _RecordingsListScreenState extends State<RecordingsListScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Date and duration row
+                  // Recording ID and duration row
                   Row(
                     children: [
-                      Icon(Icons.calendar_today_outlined, size: 14, color: Colors.grey.shade500),
+                      Icon(Icons.tag, size: 14, color: Colors.grey.shade500),
                       const SizedBox(width: 4),
-                      Text(
-                        _formatDate(meeting.date),
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF1E3A5F),
+                      Flexible(
+                        child: Text(
+                          meeting.id,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF1E3A5F),
+                          ),
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       const Spacer(),
