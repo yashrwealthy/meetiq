@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import logging
 import shutil
 import boto3
 import tempfile
@@ -13,9 +14,13 @@ from arq.connections import RedisSettings
 from settings import Settings
 from .agents.meeting_agent import MeetingAgent
 from .agents.memory_agent import MemoryAgent
+from .agents.client_overview_agent import ClientOverviewAgent
 from .services.storage import StorageService
+from .services.toolbox_service import ToolboxService, get_toolbox_service
 from .models.schemas import MeetingEvent, MeetingInsight, ClientMemory
 from services.stt_service import transcribe_audio
+
+logger = logging.getLogger(__name__)
 
 # Load settings
 try:
@@ -233,6 +238,39 @@ async def merge_and_summarize_task_v2(ctx: Dict[str, Any], client_id: str, meeti
         updated_memory.last_updated_from_meeting_id = meeting_id
         
         storage.save_client_memory(updated_memory)
+        
+        # --- Client Overview Generation (Specialized Agent) ---
+        try:
+            # Initialize toolbox service with Redis for caching
+            redis = ctx["redis"]
+            toolbox_url = getattr(settings, 'toolbox_url', None)
+            cache_ttl = getattr(settings, 'toolbox_cache_ttl', 3600)
+            
+            toolbox_service = None
+            if toolbox_url:
+                toolbox_service = get_toolbox_service(
+                    toolbox_url=toolbox_url,
+                    redis_client=redis,
+                    cache_ttl=cache_ttl
+                )
+            
+            overview_agent = ClientOverviewAgent(
+                api_key=settings.gemini_api_key,
+                toolbox_service=toolbox_service
+            )
+            enhanced_overview = await overview_agent.generate_overview(
+                client_id=client_id,
+                current_memory=updated_memory,
+                recent_insight=insight,
+                storage=storage,
+                max_history=10
+            )
+            updated_memory.client_overview = enhanced_overview
+            storage.save_client_memory(updated_memory)
+            print(f"[v2] Client overview generated: {enhanced_overview[:100]}...")
+        except Exception as overview_err:
+            logger.error(f"Failed to generate client overview: {overview_err}")
+            # Continue with processing even if overview generation fails
         
         # Store result in Redis for API retrieval
         redis = ctx["redis"]
