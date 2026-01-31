@@ -4,6 +4,8 @@ import os
 import time
 import json
 import asyncio
+import subprocess
+import tempfile
 from typing import Optional, Dict, Any
 from pathlib import Path
 
@@ -60,6 +62,47 @@ def _get_transcription_model() -> str:
     
     settings = Settings()
     return getattr(settings, 'gemini_transcription_model', 'gemini-2.5-flash')
+
+
+def _convert_webm_to_aac_sync(webm_path: str) -> str:
+    """
+    Convert WebM audio file to AAC format using ffmpeg (synchronous).
+    
+    Args:
+        webm_path: Path to the .webm file
+        
+    Returns:
+        Path to the converted .aac file or original if conversion fails
+    """
+    aac_path = webm_path.replace('.webm', '.aac')
+    
+    try:
+        # Check if ffmpeg is available
+        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True, timeout=5)
+        
+        print(f"Converting {webm_path} to AAC format...")
+        subprocess.run(
+            ['ffmpeg', '-i', webm_path, '-acodec', 'aac', '-q:a', '5', aac_path, '-y'],
+            capture_output=True,
+            check=True,
+            timeout=300  # 5 minute timeout
+        )
+        
+        # Delete the original WebM file
+        if os.path.exists(webm_path):
+            os.remove(webm_path)
+        print(f"Conversion complete: {aac_path}")
+        
+        return aac_path
+    except subprocess.CalledProcessError as e:
+        print(f"FFmpeg conversion failed: {e.stderr.decode() if e.stderr else e}")
+        return webm_path  # Return original if conversion fails
+    except FileNotFoundError:
+        print("FFmpeg not found. Skipping WebM to AAC conversion.")
+        return webm_path
+    except Exception as e:
+        print(f"Error during WebM to AAC conversion: {e}")
+        return webm_path
 
 
 async def _wait_for_file_active(client: object, file_name: str, max_attempts: int = 30, delay: float = 1.0) -> bool:
@@ -150,6 +193,14 @@ async def transcribe_audio_gemini(file_path: str) -> str:
         if not os.path.exists(local_file_path):
             print(f"Audio file not found: {local_file_path}")
             return ""
+        
+        # Convert WebM to AAC if necessary
+        if local_file_path.lower().endswith('.webm'):
+            print(f"WebM file detected. Converting to AAC format...")
+            local_file_path = _convert_webm_to_aac_sync(local_file_path)
+            if not os.path.exists(local_file_path):
+                print(f"Conversion resulted in non-existent file: {local_file_path}")
+                return ""
         
         # Get file size for logging
         file_size = os.path.getsize(local_file_path)
