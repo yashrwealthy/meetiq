@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../controllers/meetings_controller.dart';
 import '../controllers/upload_controller.dart';
@@ -1861,26 +1862,61 @@ class _EmailDraftModalState extends State<_EmailDraftModal> {
     }
   }
 
-  void _sendEmail() {
+  Future<void> _sendEmail() async {
     if (_emailDraft == null || !_emailDraft!.isSuccess) return;
     
-    // For now, just show a success message
-    // In a real app, this would open the email client or send via API
-    Navigator.pop(context);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Row(
-          children: [
-            Icon(Icons.check_circle, color: Colors.white),
-            SizedBox(width: 8),
-            Text('Email ready to send!'),
-          ],
-        ),
-        backgroundColor: const Color(0xFF10B981),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-    );
+    final subject = Uri.encodeComponent(_emailDraft!.subject ?? '');
+    final body = Uri.encodeComponent(_emailDraft!.body ?? '');
+    final mailtoUrl = Uri.parse('mailto:?subject=$subject&body=$body');
+    
+    try {
+      if (await canLaunchUrl(mailtoUrl)) {
+        await launchUrl(mailtoUrl);
+        if (mounted) {
+          Navigator.pop(context);
+        }
+      } else {
+        // Fallback: copy to clipboard if email client not available
+        _copyToClipboard();
+        if (mounted) {
+          Navigator.pop(context);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Row(
+                children: [
+                  Icon(Icons.info, color: Colors.white),
+                  SizedBox(width: 8),
+                  Expanded(child: Text('No email app found. Email copied to clipboard!')),
+                ],
+              ),
+              backgroundColor: const Color(0xFFF59E0B),
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      // Error handling - copy to clipboard as fallback
+      _copyToClipboard();
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Row(
+              children: [
+                Icon(Icons.warning, color: Colors.white),
+                SizedBox(width: 8),
+                Expanded(child: Text('Could not open email app. Copied to clipboard!')),
+              ],
+            ),
+            backgroundColor: const Color(0xFFF59E0B),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+      }
+    }
   }
 
   void _copyToClipboard() {
