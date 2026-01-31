@@ -7,6 +7,7 @@ import 'package:http_parser/http_parser.dart';
 
 import '../models/client_memory.dart';
 import '../models/client_overview.dart';
+import '../models/email_draft.dart';
 import '../models/meeting_result.dart';
 import 'upload_service_io.dart' if (dart.library.html) 'upload_service_html.dart' as platform;
 
@@ -358,6 +359,44 @@ class UploadService {
       }
     } catch (e, stackTrace) {
       debugPrint('Client overview fetch error: $e');
+      debugPrint('Stack trace: $stackTrace');
+      return null;
+    }
+  }
+
+  /// Generate email draft based on meeting results
+  Future<EmailDraft?> generateEmailDraft({
+    required String jobId,
+    required String clientName,
+    String partnerName = 'Wealthy-Partner',
+  }) async {
+    try {
+      final uri = Uri.parse('$baseUrl/email/draft');
+      debugPrint('Generating email draft: $uri');
+      debugPrint('Request body: {job_id: $jobId, client_name: $clientName, partner_name: $partnerName}');
+      
+      final response = await http.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'job_id': jobId,
+          'client_name': clientName,
+          'partner_name': partnerName,
+        }),
+      );
+      
+      debugPrint('Email draft response code: ${response.statusCode}');
+      debugPrint('Email draft response body: ${response.body}');
+      
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        return EmailDraft.fromJson(data);
+      } else {
+        debugPrint('Email draft generation failed: ${response.statusCode} - ${response.body}');
+        return null;
+      }
+    } catch (e, stackTrace) {
+      debugPrint('Email draft generation error: $e');
       debugPrint('Stack trace: $stackTrace');
       return null;
     }
