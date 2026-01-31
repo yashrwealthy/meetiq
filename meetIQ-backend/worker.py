@@ -93,7 +93,13 @@ async def dispatch_processing_task_v2(ctx: Dict[str, Any], client_id: str, meeti
         raise e
 
 async def transcribe_chunk_task_v2(ctx: Dict[str, Any], file_path: str, client_id: str, meeting_id: str, chunk_id: int, total_chunks: int) -> Dict[str, Any]:
-    from services.gemini_stt_service import transcribe_audio_gemini
+    # Try to import transcribe_audio_gemini, fallback to transcribe_audio
+    try:
+        from services.gemini_stt_service import transcribe_audio_gemini as transcribe_func
+    except (ImportError, AttributeError):
+        print("[v2] transcribe_audio_gemini not available, using fallback transcribe_audio")
+        from services.gemini_stt_service import transcribe_audio as transcribe_func
+    
     storage = StorageService()
     temp_file_path = None
     
@@ -114,7 +120,7 @@ async def transcribe_chunk_task_v2(ctx: Dict[str, Any], file_path: str, client_i
         else:
             local_input_path = file_path
 
-        transcript_json = await transcribe_audio_gemini(local_input_path) or ""
+        transcript_json = await transcribe_func(local_input_path) or ""
         
         if storage.use_s3:
             json_key = f"uploads/{client_id}/{meeting_id}/chunk_{chunk_id}.json"
