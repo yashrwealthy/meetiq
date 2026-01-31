@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
+import '../models/client_memory.dart';
 import '../models/meeting_result.dart';
 import 'upload_service_io.dart' if (dart.library.html) 'upload_service_html.dart' as platform;
 
@@ -300,5 +301,34 @@ class UploadService {
 
     debugPrint('Job timed out after $maxAttempts attempts');
     return null;
+  }
+
+  /// Fetch client memory/overview data
+  Future<ClientMemory?> fetchClientMemory(String clientId) async {
+    try {
+      final uri = Uri.parse('$baseUrl/meetings/memory')
+          .replace(queryParameters: {'client_id': clientId});
+      debugPrint('Fetching client memory: $uri');
+      final response = await http.get(uri);
+      
+      debugPrint('Client memory response code: ${response.statusCode}');
+      debugPrint('Client memory response body: ${response.body}');
+      
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        return ClientMemory.fromJson(data);
+      } else if (response.statusCode == 404) {
+        // No memory found for client - this is expected for new clients
+        debugPrint('No memory found for client $clientId');
+        return null;
+      } else {
+        debugPrint('Client memory fetch failed: ${response.statusCode} - ${response.body}');
+        return null;
+      }
+    } catch (e, stackTrace) {
+      debugPrint('Client memory fetch error: $e');
+      debugPrint('Stack trace: $stackTrace');
+      return null;
+    }
   }
 }

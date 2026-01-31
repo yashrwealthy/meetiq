@@ -3,8 +3,10 @@ import 'package:get/get.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import '../models/client_memory.dart';
 import '../services/graphql_service.dart';
 import '../services/storage_service.dart';
+import '../services/upload_service.dart';
 import '../services/user_service.dart';
 import '../widgets/voice_note_popup.dart';
 
@@ -18,10 +20,13 @@ class ClientProfileScreen extends StatefulWidget {
 class _ClientProfileScreenState extends State<ClientProfileScreen> {
   final GraphQLService _graphQLService = GraphQLService();
   final StorageService _storageService = StorageService();
+  final UploadService _uploadService = UploadService(baseUrl: 'https://finger-tried-bugs-narrow.trycloudflare.com/v2');
   UserService get _userService => Get.find<UserService>();
 
   UserProfile? _profile;
+  ClientMemory? _clientMemory;
   bool _isLoading = true;
+  bool _isMemoryLoading = true;
   int _recordingsCount = 0;
 
   @override
@@ -40,6 +45,11 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
     // Load recordings count
     final recordings = await _storageService.listMeetingsMetadata();
     _recordingsCount = recordings.length;
+
+    // Load client memory
+    if (clientId != null) {
+      _loadClientMemory(clientId);
+    }
 
     if (partnerToken != null && clientId != null && partnerToken.isNotEmpty) {
       // Try to fetch from API
@@ -61,6 +71,24 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
       _profile = UserProfile.demo();
       _isLoading = false;
     });
+  }
+
+  Future<void> _loadClientMemory(String clientId) async {
+    setState(() => _isMemoryLoading = true);
+    try {
+      final memory = await _uploadService.fetchClientMemory(clientId);
+      if (mounted) {
+        setState(() {
+          _clientMemory = memory;
+          _isMemoryLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading client memory: $e');
+      if (mounted) {
+        setState(() => _isMemoryLoading = false);
+      }
+    }
   }
 
   String _formatCurrency(double value) {
@@ -648,31 +676,118 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
                   ),
                 ],
               ),
-              Row(
-                children: [
-                  Text(
-                    '$_recordingsCount meetings',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey.shade500,
+              GestureDetector(
+                onTap: () async {
+                  final clientId = await _userService.getCurrentUserId();
+                  if (clientId != null) {
+                    _loadClientMemory(clientId);
+                  }
+                },
+                child: Row(
+                  children: [
+                    if (_clientMemory?.lastUpdatedFromMeetingId != null) ...[
+                      Text(
+                        'Last update: ${_clientMemory!.lastUpdatedFromMeetingId}',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey.shade500,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                    ],
+                    Icon(
+                      Icons.refresh, 
+                      size: 16, 
+                      color: _isMemoryLoading ? Colors.grey.shade300 : Colors.grey.shade400,
                     ),
-                  ),
-                  const SizedBox(width: 4),
-                  Icon(Icons.refresh, size: 16, color: Colors.grey.shade400),
-                ],
+                  ],
+                ),
               ),
             ],
           ),
           const SizedBox(height: 16),
 
-          // Bullet points
-          _buildBulletPoint('Current SIP commitment: ₹20,000 /month'),
-          _buildBulletPoint('Investment goals: child education'),
-          _buildBulletPoint('Investment horizon: 10 years'),
-          _buildBulletPoint('9 action items pending across meetings'),
-          const SizedBox(height: 16),
+          // Content based on API response
+          if (_isMemoryLoading)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(20),
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          else if (_clientMemory == null || !_clientMemory!.hasData)
+            _buildEmptyMemoryState()
+          else
+            _buildMemoryContent(),
+        ],
+      ),
+    );
+  }
 
-          // Pending actions banner
+  Widget _buildEmptyMemoryState() {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 24),
+      child: Column(
+        children: [
+          Icon(
+            Icons.chat_bubble_outline,
+            size: 48,
+            color: Colors.grey.shade300,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Start conversation to get client overview',
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey.shade500,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          ElevatedButton.icon(
+            onPressed: () => context.go('/record'),
+            icon: const Icon(Icons.mic, size: 18),
+            label: const Text('Start Meeting'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1E3A5F),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMemoryContent() {
+    final memory = _clientMemory!;
+    final pendingItems = memory.pendingActionItems;
+    final displayItems = pendingItems.take(5).toList();  // Show max 5 items
+    final remainingCount = pendingItems.length - displayItems.length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Pending action items
+        ...displayItems.map((item) => _buildBulletPoint(item)),
+        
+        if (remainingCount > 0) ...[
+          const SizedBox(height: 8),
+          Text(
+            '+$remainingCount more action items',
+            style: TextStyle(
+              fontSize: 13,
+              color: Colors.grey.shade500,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        ],
+        
+        const SizedBox(height: 16),
+
+        // Pending actions banner
+        if (pendingItems.isNotEmpty)
           GestureDetector(
             onTap: () => context.go('/recordings'),
             child: Container(
@@ -685,10 +800,10 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
                 children: [
                   Icon(Icons.error_outline, color: Colors.amber.shade700, size: 20),
                   const SizedBox(width: 12),
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      '9 pending actions across all meetings',
-                      style: TextStyle(
+                      '${pendingItems.length} pending action${pendingItems.length > 1 ? 's' : ''} from meetings',
+                      style: const TextStyle(
                         fontSize: 13,
                         color: Color(0xFF5D4037),
                       ),
@@ -699,8 +814,7 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
               ),
             ),
           ),
-        ],
-      ),
+      ],
     );
   }
 
