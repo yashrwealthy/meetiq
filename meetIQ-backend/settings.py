@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     s3_region: str = "ap-south-1"
     s3_access_key: Optional[str] = None
     s3_secret_key: Optional[str] = None
+    
+    # Toolbox configuration
+    toolbox_url: Optional[str] = "http://localhost:8005"
+    toolbox_cache_ttl: int = 3600  # Cache TTL in seconds (1 hour default)
 
     model_config = SettingsConfigDict(
         env_file=Path(

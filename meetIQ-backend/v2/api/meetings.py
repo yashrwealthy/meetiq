@@ -124,7 +124,8 @@ async def get_job_status_v2(
         
         # Extract client_id and meeting_id from job_id pattern: v2-merge-{client_id}-{meeting_id}
         if job_id.startswith("v2-merge-"):
-            parts = job_id.replace("v2-merge-", "").split("-", 1)
+            # Use rsplit to split from the right since client_id may contain hyphens (UUID)
+            parts = job_id.replace("v2-merge-", "").rsplit("-", 1)
             if len(parts) == 2:
                 client_id, meeting_id = parts
                 

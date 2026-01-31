@@ -5,6 +5,7 @@ Removes unnecessary format conversions since Gemini natively supports webm, mp3,
 import os
 import boto3
 import asyncio
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
@@ -31,6 +32,46 @@ def _get_settings():
     return _settings_cache
 
 
+def _convert_webm_to_aac(webm_path: str) -> str:
+    """
+    Convert WebM audio file to AAC format using ffmpeg.
+    
+    Args:
+        webm_path: Path to the .webm file
+        
+    Returns:
+        Path to the converted .aac file
+    """
+    aac_path = webm_path.replace('.webm', '.aac')
+    
+    try:
+        # Check if ffmpeg is available
+        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+        
+        print(f"Converting {webm_path} to AAC format...")
+        subprocess.run(
+            ['ffmpeg', '-i', webm_path, '-acodec', 'aac', '-q:a', '5', aac_path, '-y'],
+            capture_output=True,
+            check=True,
+            timeout=300  # 5 minute timeout
+        )
+        
+        # Delete the original WebM file
+        os.remove(webm_path)
+        print(f"Conversion complete: {aac_path}")
+        
+        return aac_path
+    except subprocess.CalledProcessError as e:
+        print(f"FFmpeg conversion failed: {e.stderr.decode() if e.stderr else e}")
+        return webm_path  # Return original if conversion fails
+    except FileNotFoundError:
+        print("FFmpeg not found. Skipping WebM to AAC conversion.")
+        return webm_path
+    except Exception as e:
+        print(f"Error during WebM to AAC conversion: {e}")
+        return webm_path
+
+
 def _upload_to_s3_sync(file_path: str, bucket: str, key: str, region: str, awk: str, sak: str):
     """Synchronous S3 upload for use in thread pool."""
     s3 = boto3.client(
@@ -50,7 +91,7 @@ async def save_chunk_to_disk(
 ) -> str:
     """
     Save uploaded audio chunk to disk.
-    Preserves original format (no conversion needed for Gemini).
+    Converts WebM to AAC format, preserves other formats.
     """
     base_dir = Path("uploads") / client_id / meeting_id
     base_dir.mkdir(parents=True, exist_ok=True)
@@ -73,7 +114,14 @@ async def save_chunk_to_disk(
         f.write(content)
         
     await upload_file.close()
-    return os.fspath(file_path)
+    
+    # Convert WebM to AAC if received in WebM format
+    final_path = os.fspath(file_path)
+    if ext.lower() == ".webm":
+        loop = asyncio.get_running_loop()
+        final_path = await loop.run_in_executor(None, _convert_webm_to_aac, final_path)
+    
+    return final_path
 
 
 async def handle_s3_upload(file_path_str: str, client_id: str, meeting_id: str) -> str:

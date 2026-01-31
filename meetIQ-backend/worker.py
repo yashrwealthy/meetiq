@@ -4,15 +4,19 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict
 from datetime import datetime
+import logging
 
 from arq.connections import RedisSettings
 
 from settings import Settings
 from v2.agents.meeting_agent import MeetingAgent
 from v2.agents.memory_agent import MemoryAgent
+from v2.agents.client_overview_agent import ClientOverviewAgent
 from v2.services.storage import StorageService
 from v2.models.schemas import MeetingEvent, MeetingInsight, ClientMemory
 from services.stt_service import transcribe_audio
+
+logger = logging.getLogger(__name__)
 
 # Load settings
 try:
@@ -223,6 +227,21 @@ async def merge_and_summarize_task_v2(ctx: Dict[str, Any], client_id: str, meeti
         updated_memory.last_updated_from_meeting_id = meeting_id
         
         storage.save_client_memory(updated_memory)
+
+        try:
+            overview_agent = ClientOverviewAgent(api_key=settings.gemini_api_key)
+            enhanced_overview = await overview_agent.generate_overview(
+                client_id=client_id,
+                current_memory=updated_memory,
+                recent_insight=insight,
+                storage=storage,
+                max_history=10
+            )
+            updated_memory.client_overview = enhanced_overview
+            storage.save_client_memory(updated_memory)
+            print(f"[v2] Client overview generated: {enhanced_overview[:100]}...")
+        except Exception as overview_err:
+            logger.error(f"Failed to generate client overview: {overview_err}")
         redis = ctx["redis"]
         result_key = f"v2:meeting:{client_id}:{meeting_id}:result"
         await redis.set(result_key, insight.model_dump_json())
