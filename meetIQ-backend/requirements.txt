@@ -9,3 +9,5 @@ python-dotenv>=1.0.1
 redis
 arq
 boto3
+toolbox-core
+pydantic-settings
