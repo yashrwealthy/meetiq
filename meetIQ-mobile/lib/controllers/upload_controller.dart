@@ -10,7 +10,7 @@ import '../services/user_service.dart';
 class UploadController extends GetxController {
   final StorageService _storageService = StorageService();
   final NetworkService _networkService = NetworkService();
-  final UploadService _uploadService = UploadService(baseUrl: 'https://finger-tried-bugs-narrow.trycloudflare.com/v2');
+  final UploadService _uploadService = UploadService(baseUrl: 'http://192.168.1.73:8004/v2');
   UserService get _userService => Get.find<UserService>();
 
   final isUploading = false.obs;

@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
 import '../models/client_memory.dart';
+import '../models/client_overview.dart';
 import '../models/meeting_result.dart';
 import 'upload_service_io.dart' if (dart.library.html) 'upload_service_html.dart' as platform;
 
@@ -327,6 +328,36 @@ class UploadService {
       }
     } catch (e, stackTrace) {
       debugPrint('Client memory fetch error: $e');
+      debugPrint('Stack trace: $stackTrace');
+      return null;
+    }
+  }
+
+  /// Fetch client overview/risk assessment data
+  Future<ClientOverview?> fetchClientOverview(String clientId) async {
+    try {
+      // Use the base URL but replace /v2 with empty to get the root URL
+      final rootUrl = baseUrl.replaceAll('/v2', '');
+      final uri = Uri.parse('http://192.168.1.73:8004/v2/clients/$clientId/overview');
+      debugPrint('Fetching client overview: $uri');
+      final response = await http.get(uri);
+      
+      debugPrint('Client overview response code: ${response.statusCode}');
+      debugPrint('Client overview response body: ${response.body}');
+      
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        return ClientOverview.fromJson(data);
+      } else if (response.statusCode == 404) {
+        // No overview found for client
+        debugPrint('No overview found for client $clientId');
+        return null;
+      } else {
+        debugPrint('Client overview fetch failed: ${response.statusCode} - ${response.body}');
+        return null;
+      }
+    } catch (e, stackTrace) {
+      debugPrint('Client overview fetch error: $e');
       debugPrint('Stack trace: $stackTrace');
       return null;
     }
