@@ -33,6 +33,7 @@ class ClientMemory(BaseModel):
 
     # Stable identity & preferences
     profile: Dict[str, str] = Field(default_factory=dict, description="Basic client details like age, occupation, etc.")
+    client_overview: Optional[str] = Field(default=None, description="High-level narrative summary of the client (max 500 chars)")
     risk_profile: Optional[str] = None
     preferred_products: List[str] = Field(default_factory=list)
     disfavored_products: List[str] = Field(default_factory=list)
