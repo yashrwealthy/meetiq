@@ -3,7 +3,7 @@ import logging
 from typing import Optional, Any, Dict
 from google import genai
 from google.genai import types
-from ..models.schemas import ClientMemory, MeetingInsight
+from ..models.schemas import ClientMemory, MeetingInsight, ClientAdvisorReport
 from ..services.storage import StorageService
 from ..services.toolbox_service import ToolboxService
 
@@ -95,7 +95,7 @@ class ClientOverviewAgent:
         enrichment_section = ""
         if enriched_context:
             enrichment_section = f"""
-4. ENRICHED GOAL/SCHEME DETAILS (from system):
+4. EXTERNAL SYSTEM DATA (Goals, Accounts, etc.):
 {json.dumps(enriched_context, indent=2, default=str)}
 """
 
@@ -112,7 +112,7 @@ CRITICAL REQUIREMENTS:
 5. Include: identity/situation, financial behavior, key goals, decision-making style
 6. Output ONLY the narrative text - no JSON, no quotes, no formatting
 7. MUST be complete sentences - never end mid-sentence
-8. If enriched goal/scheme details are provided, incorporate relevant scheme names or goal sub-types
+8. If enriched data (goals, accounts) is provided, incorporate relevant schemes, total portfolio value, or account types.
 
 STRUCTURE (2-3 complete sentences):
 - Sentence 1: Who they are (role, life stage, situation)
@@ -185,6 +185,97 @@ Generate the client overview now (100-500 chars, complete sentences only):"""
             # Fallback to a basic overview from memory
             return self._generate_fallback_overview(current_memory)
 
+    async def generate_advisor_report(
+        self,
+        client_id: str,
+        current_memory: ClientMemory,
+        recent_insight: MeetingInsight,
+        storage: StorageService,
+        max_history: int = 10
+    ) -> ClientAdvisorReport:
+        """
+        Generate a comprehensive advisor report including risk, pitch prep, and topics.
+        """
+        if not self.client:
+            # Fallback
+            overview = self._generate_fallback_overview(current_memory)
+            return ClientAdvisorReport(
+                summary_narrative=overview,
+                risk_assessment="API Key missing - cannot generate inference.",
+                pitch_preparation="Review client file manually.",
+                discussion_topics=["General Check-in"]
+            )
+
+        # Reuse logic to fetch context (this duplicates logic but keeps it self-contained for now)
+        meeting_ids = storage.list_meeting_ids(client_id)
+        recent_meeting_ids = sorted(meeting_ids, reverse=True)[:max_history]
+        historical_insights = []
+        for mid in recent_meeting_ids:
+            insight = storage.load_meeting_insight(client_id, mid)
+            if insight:
+                historical_insights.append(insight)
+        
+        enriched_context = await self._fetch_enrichment_data(current_memory)
+        enrichment_section = ""
+        if enriched_context:
+            enrichment_section = f"4. EXTERNAL SYSTEM DATA:\n{json.dumps(enriched_context, indent=2, default=str)}\n"
+
+        prompt = f"""
+You are an expert Senior Financial Advisor Assistant.
+
+Analyze the provided client data to generate a strategic "Pre-Meeting Advisor Report".
+
+INPUTS:
+1. CLIENT MEMORY:
+{current_memory.model_dump_json()}
+
+2. LATEST MEETING INSIGHT:
+{recent_insight.model_dump_json()}
+
+3. HISTORICAL SUMMARY:
+{self._summarize_historical_insights(historical_insights)}
+{enrichment_section}
+
+TASK:
+Generate a JSON response with the following fields:
+1. "summary_narrative": A 20-30 word concise bio/status as per previous standards.
+2. "risk_assessment": Infer their risk tolerance (Conservative/Moderate/Aggressive) and specific behavioral cues (e.g., "Panic sells in downturns", "Ask detailed questions about fees").
+3. "pitch_preparation": Suggest 1-2 specific product types or financial strategies suitable for their current life stage and recent discussions. Explain WHY in 1 sentence.
+4. "discussion_topics": A list of 3-5 engaging topics for the next meeting (e.g., "Review of child's education corpus performance", "Tax implications of recent sale").
+
+OUTPUT FORMAT:
+Strictly valid JSON. No markdown code blocks.
+Example:
+{{
+  "summary_narrative": "Mid-career professional, 40s, focused on wealth accumulation...",
+  "risk_assessment": "Moderate-Aggressive. Shows interest in small-caps but worries about liquidity.",
+  "pitch_preparation": "Suggest considering a Multi-Asset Allocation Fund to balance their high equity exposure.",
+  "discussion_topics": ["Portfolio rebalancing", "Tax harvesting", " retirement goal review"]
+}}
+"""
+        try:
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json"
+                )
+            )
+            
+            # Parse JSON
+            data = json.loads(response.text)
+            return ClientAdvisorReport(**data)
+
+        except Exception as e:
+            logger.error(f"Error generating advisor report: {e}")
+            overview = self._generate_fallback_overview(current_memory)
+            return ClientAdvisorReport(
+                summary_narrative=overview,
+                risk_assessment="Error processing report.",
+                pitch_preparation="Check logs.",
+                discussion_topics=["Review Portfolio"]
+            )
+
     def _summarize_historical_insights(self, insights: list[MeetingInsight]) -> str:
         """
         Create a compact summary of historical meeting insights for the prompt.
@@ -253,15 +344,7 @@ Generate the client overview now (100-500 chars, complete sentences only):"""
         return overview if overview else f"Client {memory.client_id}"
 
     async def _fetch_enrichment_data(self, memory: ClientMemory) -> Dict[str, Any]:
-        """
-        Fetch enriched data from toolbox for goals and schemes.
-        
-        Args:
-            memory: Current client memory
-            
-        Returns:
-            Dict containing enriched goal/scheme details
-        """
+
         if not self.toolbox or not self.toolbox.is_available:
             logger.debug("Toolbox not available, skipping enrichment")
             return {}
@@ -269,6 +352,7 @@ Generate the client overview now (100-500 chars, complete sentences only):"""
         enriched = {}
         
         try:
+            # 1. Fetch User Goals
             # Fetch all user goals using the client_id (sanitized by service)
             user_goals = await self.toolbox.get_user_goals(memory.client_id)
             
@@ -279,6 +363,18 @@ Generate the client overview now (100-500 chars, complete sentences only):"""
                     enriched["user_portfolio_goals"] = processed_goals
                     logger.info("Enriched with user portfolio data from toolbox")
             
+            # 2. Fetch Account Details
+            clean_id = memory.client_id.replace("-", "")
+            account_details = await self.toolbox.call_tool(
+                "get-account-details-by-user-id",
+                user_id=clean_id
+            )
+            
+            if account_details:
+                processed_details = self._process_large_toolbox_data(account_details, max_items=10)
+                enriched["client_account_details"] = processed_details
+                logger.info("Enriched with client account details from toolbox")
+            
         except Exception as e:
             logger.error(f"Error fetching enrichment data: {e}")
         
@@ -287,21 +383,64 @@ Generate the client overview now (100-500 chars, complete sentences only):"""
     def _process_large_toolbox_data(self, data: Any, max_items: int = 5) -> Any:
         """
         Process and truncate large toolbox responses to safe-guard LLM context.
+        Extracts specific financial goal/scheme fields if present.
         """
-        # If string JSON, parse it
         if isinstance(data, str):
             try:
                 data = json.loads(data)
             except Exception:
-                # If raw string, just truncate
                 return data[:1000] + "..." if len(data) > 1000 else data
-
-        # If list, take top N
+        
+        # If list, take top N and attempt to extract relevant fields
         if isinstance(data, list):
-            return data[:max_items]
+            processed_items = []
+            target_fields = ["scheme_name", "invested_value", "current_value", "goal_name"]
             
-        # If dict, we're probably okay, but safeguards are good
+            for item in data[:max_items]:
+                if not isinstance(item, dict):
+                    processed_items.append(item)
+                    continue
+                
+                extracted = {}
+                found_targets = False
+                
+                # search for each target field recursively within the item
+                for field in target_fields:
+                    val = self._find_value_recursive(item, field)
+                    if val is not None:
+                        extracted[field] = val
+                        found_targets = True
+                
+                # If we found relevant fields, use the filtered dict
+                # Otherwise, fall back to the original item so we don't lose data if keys don't match
+                if found_targets:
+                    processed_items.append(extracted)
+                else:
+                    processed_items.append(item)
+            
+            return processed_items
+        
         if isinstance(data, dict) and len(str(data)) > 5000:
              return {"data_summary": "Response too large to process fully"}
              
         return data
+
+    def _find_value_recursive(self, obj: Any, target_key: str) -> Any:
+        """
+        Recursively search for a key in a dictionary (case-insensitive).
+        """
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if k.lower() == target_key.lower():
+                    return v
+                # Recurse into nested dictionaries
+                if isinstance(v, (dict, list)):
+                     found = self._find_value_recursive(v, target_key)
+                     if found is not None:
+                         return found
+        elif isinstance(obj, list):
+            for item in obj:
+                found = self._find_value_recursive(item, target_key)
+                if found is not None:
+                    return found
+        return None
