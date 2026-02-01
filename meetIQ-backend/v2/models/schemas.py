@@ -54,3 +54,10 @@ class ClientMemory(BaseModel):
     # Memory hygiene
     last_updated_from_meeting_id: Optional[str] = None
     memory_confidence: Literal["high", "medium", "low"] = "medium"
+
+# Layer 4: Real-time Advisor Context (Ephemeral, dynamic)
+class ClientAdvisorReport(BaseModel):
+    summary_narrative: str = Field(description="20-30 word advisor-ready summary")
+    risk_assessment: str = Field(description="Inferred risk appetite and behavioral cues")
+    pitch_preparation: str = Field(description="Suggested products or angles for the next conversation")
+    discussion_topics: List[str] = Field(description="3-5 key topics to address")
