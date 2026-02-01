@@ -8,6 +8,8 @@ from arq.connections import RedisSettings
 from v1.api.meetings import router as meetings_router
 from v2.api.meetings import router as v2_router
 from v2.api.meetings_gemini import router as v2_gemini_router
+from v2.api.clients import router as v2_clients_router
+from v2.api.email import router as v2_email_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -39,3 +41,6 @@ app.add_middleware(
 
 app.include_router(meetings_router, prefix="/meetings", tags=["meetings"])
 app.include_router(v2_router, tags=["v2 meetings"])
+app.include_router(v2_clients_router)
+app.include_router(v2_email_router)
+
