@@ -339,7 +339,7 @@ class UploadService {
     try {
       // Use the base URL but replace /v2 with empty to get the root URL
       final rootUrl = baseUrl.replaceAll('/v2', '');
-      final uri = Uri.parse('http://192.168.1.73:8004/v2/clients/$clientId/overview');
+      final uri = Uri.parse('http://127.0.01:8000/v2/clients/$clientId/overview');
       debugPrint('Fetching client overview: $uri');
       final response = await http.get(uri);
       
@@ -397,6 +397,92 @@ class UploadService {
       }
     } catch (e, stackTrace) {
       debugPrint('Email draft generation error: $e');
+      debugPrint('Stack trace: $stackTrace');
+      return null;
+    }
+  }
+
+  /// Upload an external audio file (from device storage) as a single chunk
+  /// Returns the job_id if successful, null otherwise
+  Future<String?> uploadExternalFile({
+    required String clientId,
+    required String meetingId,
+    required String filePath,
+    required String fileName,
+    Uint8List? fileBytes,  // For web: pass bytes directly
+  }) async {
+    try {
+      final uri = Uri.parse('$baseUrl/meetings/upload_chunk');
+      final request = http.MultipartRequest('POST', uri)
+        ..fields['client_id'] = clientId
+        ..fields['meeting_id'] = meetingId
+        ..fields['chunk_id'] = '0'
+        ..fields['total_chunks'] = '1';
+
+      // Determine content type from extension
+      final ext = fileName.toLowerCase().split('.').last;
+      String mimeType = 'audio/mpeg';  // default
+      if (ext == 'webm') {
+        mimeType = 'audio/webm';
+      } else if (ext == 'wav') {
+        mimeType = 'audio/wav';
+      } else if (ext == 'm4a' || ext == 'aac') {
+        mimeType = 'audio/aac';
+      } else if (ext == 'ogg') {
+        mimeType = 'audio/ogg';
+      }
+
+      if (kIsWeb && fileBytes != null) {
+        // On web, use bytes directly
+        request.files.add(http.MultipartFile.fromBytes(
+          'file',
+          fileBytes,
+          filename: fileName,
+          contentType: MediaType.parse(mimeType),
+        ));
+      } else {
+        // On native, use file path
+        request.files.add(await http.MultipartFile.fromPath(
+          'file',
+          filePath,
+          contentType: MediaType.parse(mimeType),
+        ));
+      }
+
+      debugPrint('Uploading external file: $fileName for meeting $meetingId');
+      debugPrint('Request URL: $uri');
+      debugPrint('Fields: ${request.fields}');
+
+      final response = await request.send();
+      final responseBody = await response.stream.bytesToString();
+
+      debugPrint('Response status: ${response.statusCode}');
+      debugPrint('Response body: $responseBody');
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final data = jsonDecode(responseBody) as Map<String, dynamic>;
+        debugPrint('External upload response: $data');
+        
+        // Now acknowledge the upload to trigger processing
+        final ackResponse = await acknowledgeUpload(
+          clientId: clientId,
+          meetingId: meetingId,
+          totalChunks: 1,
+        );
+        
+        if (ackResponse != null && ackResponse.jobId != null) {
+          debugPrint('External file uploaded and processing started. Job ID: ${ackResponse.jobId}');
+          return ackResponse.jobId;
+        } else {
+          debugPrint('External upload ack failed or no job ID returned');
+          return null;
+        }
+      } else {
+        debugPrint('External upload failed: ${response.statusCode} - $responseBody');
+        return null;
+      }
+    } catch (e, stackTrace) {
+      debugPrint('External upload error: $e');
       debugPrint('Stack trace: $stackTrace');
       return null;
     }

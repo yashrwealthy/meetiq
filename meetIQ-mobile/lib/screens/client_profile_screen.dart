@@ -1,3 +1,5 @@
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:go_router/go_router.dart';
@@ -21,7 +23,7 @@ class ClientProfileScreen extends StatefulWidget {
 class _ClientProfileScreenState extends State<ClientProfileScreen> {
   final GraphQLService _graphQLService = GraphQLService();
   final StorageService _storageService = StorageService();
-  final UploadService _uploadService = UploadService(baseUrl: 'http://192.168.1.73:8004/v2');
+  final UploadService _uploadService = UploadService(baseUrl: 'http://127.0.01:8000/v2');
   UserService get _userService => Get.find<UserService>();
 
   UserProfile? _profile;
@@ -323,8 +325,14 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
           ),
           const SizedBox(height: 12),
 
-          // Start Meeting button
-          _buildStartMeetingCard(),
+          // Start Meeting and Upload Recording row
+          Row(
+            children: [
+              Expanded(child: _buildStartMeetingCard()),
+              const SizedBox(width: 12),
+              Expanded(child: _buildUploadRecordingCard()),
+            ],
+          ),
           const SizedBox(height: 12),
 
           // Voice Note and Past Meetings row
@@ -540,12 +548,12 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
     return GestureDetector(
       onTap: () => context.go('/record'),
       child: Container(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: const Color(0xFF1E3A5F),
           borderRadius: BorderRadius.circular(16),
         ),
-        child: Row(
+        child: Column(
           children: [
             Container(
               width: 48,
@@ -560,32 +568,193 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
                 size: 28,
               ),
             ),
-            const SizedBox(width: 16),
-            const Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Start Meeting',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                  ),
-                ),
-                SizedBox(height: 4),
-                Text(
-                  'Record & generate summary',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.white70,
-                  ),
-                ),
-              ],
+            const SizedBox(height: 12),
+            const Text(
+              'Start Meeting',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Record live',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.white70,
+              ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildUploadRecordingCard() {
+    return GestureDetector(
+      onTap: _pickAndUploadRecording,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF00BFA5), Color(0xFF00897B)],
+          ),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(
+                Icons.upload_file,
+                color: Colors.white,
+                size: 28,
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Upload Recording',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'From device',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.white70,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickAndUploadRecording() async {
+    try {
+      // Pick audio file
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.audio,
+        allowMultiple: false,
+        withData: true,  // Get bytes for web support
+      );
+
+      if (result == null || result.files.isEmpty) {
+        return;  // User cancelled
+      }
+
+      final file = result.files.first;
+      final fileName = file.name;
+      final fileBytes = file.bytes;
+      final fileSize = file.size;
+      // On web, path is not available - only use it on native platforms
+      final filePath = kIsWeb ? null : file.path;
+
+      if (fileBytes == null && filePath == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Could not read the selected file'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Show loading indicator
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                ),
+                SizedBox(width: 12),
+                Text('Saving recording...'),
+              ],
+            ),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+
+      // Generate unique recording ID
+      final recordingId = DateTime.now().millisecondsSinceEpoch.toString();
+      final clientName = _profile?.name ?? 'Client';
+
+      // Create meeting metadata locally
+      await _storageService.createMeeting(
+        recordingId: recordingId,
+        clientName: clientName,
+      );
+
+      // Save the external audio file locally
+      await _storageService.saveExternalAudioFile(
+        recordingId: recordingId,
+        fileName: fileName,
+        filePath: filePath,
+        fileBytes: fileBytes,
+        fileSizeBytes: fileSize,
+      );
+
+      // Update status to pending (ready for upload/processing later)
+      await _storageService.updateMeetingStatus(recordingId, 'pending');
+
+      if (!mounted) return;
+
+      // Clear previous snackbar and show success
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle, color: Colors.white),
+              const SizedBox(width: 12),
+              Expanded(child: Text('Recording saved: $fileName')),
+            ],
+          ),
+          backgroundColor: const Color(0xFF10B981),
+          duration: const Duration(seconds: 3),
+          action: SnackBarAction(
+            label: 'VIEW',
+            textColor: Colors.white,
+            onPressed: () {
+              context.go('/recording/$recordingId');
+            },
+          ),
+        ),
+      );
+
+      // Refresh data to show new recording
+      _loadData();
+    } catch (e) {
+      debugPrint('Error picking file: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Widget _buildQuickActionCard({

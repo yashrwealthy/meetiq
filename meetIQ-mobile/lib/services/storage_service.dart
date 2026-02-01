@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
 
@@ -169,6 +171,73 @@ class StorageService {
     final key = await _getStorageKey(recordingId);
     _webChunks[key] ??= [];
     _webChunks[key]!.add(blobUrl);
+  }
+
+  /// Save an external audio file as a recording chunk
+  /// Works for both web (bytes) and native (file copy)
+  Future<void> saveExternalAudioFile({
+    required String recordingId,
+    required String fileName,
+    String? filePath,
+    Uint8List? fileBytes,
+    int? fileSizeBytes,
+  }) async {
+    final key = await _getStorageKey(recordingId);
+    final userId = await _userService.getCurrentUserId() ?? 'default_user';
+    
+    // Determine file extension
+    final extension = fileName.split('.').last.toLowerCase();
+    final chunkName = 'chunk_001.$extension';
+    
+    if (kIsWeb) {
+      // For web, create a blob URL from the bytes for playback
+      if (fileBytes != null) {
+        final mimeType = platform.getMimeType(fileName);
+        final blobUrl = platform.createBlobUrl(fileBytes, mimeType);
+        _webChunks[key] ??= [];
+        _webChunks[key]!.add(blobUrl);
+        debugPrint('StorageService: Created blob URL for web playback: $blobUrl');
+      }
+    } else {
+      // For native, copy the file to the recording directory
+      if (filePath != null) {
+        final dirPath = await platform.getMeetingDirPath(userId, recordingId);
+        final destPath = '$dirPath/$chunkName';
+        await platform.copyFile(filePath, destPath);
+        debugPrint('StorageService: Copied external file to: $destPath');
+      } else if (fileBytes != null) {
+        // If we have bytes but no path, write bytes to file
+        final dirPath = await platform.getMeetingDirPath(userId, recordingId);
+        final destPath = '$dirPath/$chunkName';
+        await platform.writeBytes(destPath, fileBytes);
+        debugPrint('StorageService: Wrote external file bytes to: $destPath');
+      }
+    }
+    
+    // Estimate duration from file size (rough approximation)
+    // For MP3: ~1 MB per minute at 128kbps
+    // For WAV: ~10 MB per minute at CD quality
+    int estimatedDuration = 0;
+    final sizeBytes = fileSizeBytes ?? fileBytes?.length ?? 0;
+    if (sizeBytes > 0) {
+      if (extension == 'wav') {
+        // WAV: ~10MB per minute
+        estimatedDuration = (sizeBytes / (10 * 1024 * 1024) * 60).round();
+      } else {
+        // MP3/M4A/others: ~1MB per minute
+        estimatedDuration = (sizeBytes / (1024 * 1024) * 60).round();
+      }
+      // Ensure at least 1 second if we have a file
+      if (estimatedDuration == 0) estimatedDuration = 1;
+    }
+    
+    // Update metadata
+    final data = await loadMetadata(recordingId);
+    data['total_chunks'] = 1;
+    data['external_file'] = true;
+    data['original_filename'] = fileName;
+    data['duration'] = estimatedDuration;
+    await saveMetadata(recordingId, data);
   }
 
   /// Delete a meeting and all its data

@@ -1816,7 +1816,7 @@ class _EmailDraftModal extends StatefulWidget {
 }
 
 class _EmailDraftModalState extends State<_EmailDraftModal> {
-  final UploadService _uploadService = UploadService(baseUrl: 'http://192.168.1.73:8004/v2');
+  final UploadService _uploadService = UploadService(baseUrl: 'http://127.0.01:8000/v2');
   
   EmailDraft? _emailDraft;
   bool _isLoading = true;
