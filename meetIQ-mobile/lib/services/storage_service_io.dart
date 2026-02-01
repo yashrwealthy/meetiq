@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:path_provider/path_provider.dart';
 
@@ -87,4 +88,27 @@ Future<void> deleteMeeting(String userId, String recordingId) async {
   if (directory.existsSync()) {
     await directory.delete(recursive: true);
   }
+}
+
+/// Copy a file from source to destination
+Future<void> copyFile(String sourcePath, String destPath) async {
+  final sourceFile = File(sourcePath);
+  await sourceFile.copy(destPath);
+}
+
+/// Write bytes to a file
+Future<void> writeBytes(String destPath, List<int> bytes) async {
+  final file = File(destPath);
+  await file.writeAsBytes(bytes);
+}
+
+/// Create a blob URL from bytes (native stub - not used on native)
+String createBlobUrl(Uint8List bytes, String mimeType) {
+  // Not used on native platforms
+  return '';
+}
+
+/// Get mime type from file extension (native stub)
+String getMimeType(String fileName) {
+  return 'audio/mpeg';
 }

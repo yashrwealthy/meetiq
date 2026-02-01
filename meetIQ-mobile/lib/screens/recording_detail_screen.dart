@@ -1,16 +1,22 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../controllers/meetings_controller.dart';
 import '../controllers/upload_controller.dart';
 import '../models/action_item.dart';
+import '../models/email_draft.dart';
 import '../models/follow_up.dart';
 import '../models/meeting.dart';
 import '../services/audio_player_service.dart';
+import '../services/graphql_service.dart';
 import '../services/storage_service.dart';
+import '../services/upload_service.dart';
+import '../services/user_service.dart';
 import '../utils/calendar_utils.dart';
 import '../widgets/primary_button.dart';
 
@@ -30,6 +36,7 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
   final StorageService _storageService = StorageService();
   
   Meeting? _meeting;
+  UserProfile? _profile;
   bool _isPlaying = false;
   bool _isLoading = true;
   bool _isSaving = false;
@@ -57,12 +64,33 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
   @override
   void initState() {
     super.initState();
+    _loadProfile();
     _loadMeeting();
     _playingSubscription = _audioPlayer.playingStream.listen((isPlaying) {
       if (mounted) {
         setState(() => _isPlaying = isPlaying);
       }
     });
+  }
+
+  Future<void> _loadProfile() async {
+    final userService = Get.find<UserService>();
+    final partnerToken = await userService.getPartnerToken();
+    final clientId = await userService.getCurrentUserId();
+
+    if (partnerToken != null && clientId != null && partnerToken.isNotEmpty) {
+      final profile = await GraphQLService().fetchUserProfile(
+        partnerToken: partnerToken,
+        clientId: clientId,
+      );
+      if (profile != null && mounted) {
+        setState(() => _profile = profile);
+        return;
+      }
+    }
+    if (mounted) {
+      setState(() => _profile = UserProfile.demo());
+    }
   }
 
   Future<void> _loadMeeting() async {
@@ -308,12 +336,25 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
                         Text(
-                          meeting.clientName,
+                          meeting.clientName.isEmpty || meeting.clientName == 'Client' 
+                              ? (_profile?.name ?? 'Default Client')
+                              : meeting.clientName,
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 24,
                             fontWeight: FontWeight.bold,
                           ),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Icon(Icons.tag, color: Colors.white.withAlpha(179), size: 14),
+                            const SizedBox(width: 4),
+                            Text(
+                              meeting.id,
+                              style: TextStyle(color: Colors.white.withAlpha(179), fontSize: 12),
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 4),
                         Row(
@@ -403,6 +444,10 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
 
                   // Confidence Level
                   _buildConfidenceCard(meeting),
+                  const SizedBox(height: 16),
+
+                  // Email Draft Button
+                  _buildEmailDraftButton(meeting),
                 ],
 
                 const SizedBox(height: 32),
@@ -1643,6 +1688,649 @@ class _RecordingDetailScreenState extends State<RecordingDetailScreen> {
                 ),
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmailDraftButton(Meeting meeting) {
+    return GestureDetector(
+      onTap: () => _showEmailDraftModal(meeting),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF059669), Color(0xFF10B981)],
+          ),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF10B981).withAlpha(77),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: Colors.white.withAlpha(51),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(
+                Icons.mail_outline,
+                color: Colors.white,
+                size: 26,
+              ),
+            ),
+            const SizedBox(width: 16),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Prepare Email Draft',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  SizedBox(height: 2),
+                  Text(
+                    'AI-generated follow-up email',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.white70,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(
+              Icons.arrow_forward_ios,
+              color: Colors.white70,
+              size: 18,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showEmailDraftModal(Meeting meeting) {
+    final jobId = meeting.jobId;
+    if (jobId == null || jobId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Row(
+            children: [
+              Icon(Icons.error_outline, color: Colors.white),
+              SizedBox(width: 8),
+              Text('No job ID found for this meeting'),
+            ],
+          ),
+          backgroundColor: errorRed,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
+      return;
+    }
+
+    // Get the client name from the meeting or profile
+    final clientName = meeting.clientName.isEmpty || meeting.clientName == 'Client'
+        ? (_profile?.name ?? 'Client')
+        : meeting.clientName;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _EmailDraftModal(
+        jobId: jobId,
+        clientName: clientName,
+      ),
+    );
+  }
+}
+
+/// Modal widget to display and manage email draft
+class _EmailDraftModal extends StatefulWidget {
+  final String jobId;
+  final String clientName;
+
+  const _EmailDraftModal({
+    required this.jobId,
+    required this.clientName,
+  });
+
+  @override
+  State<_EmailDraftModal> createState() => _EmailDraftModalState();
+}
+
+class _EmailDraftModalState extends State<_EmailDraftModal> {
+  final UploadService _uploadService = UploadService(baseUrl: 'http://127.0.01:8000/v2');
+  
+  EmailDraft? _emailDraft;
+  bool _isLoading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _generateEmailDraft();
+  }
+
+  Future<void> _generateEmailDraft() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final draft = await _uploadService.generateEmailDraft(
+        jobId: widget.jobId,
+        clientName: widget.clientName,
+        partnerName: 'Wealthy-Partner',
+      );
+      
+      if (mounted) {
+        setState(() {
+          _emailDraft = draft;
+          _isLoading = false;
+          if (draft == null) {
+            _error = 'Unable to generate email draft. Please try again.';
+          } else if (!draft.isSuccess) {
+            _error = draft.error ?? 'Failed to generate email draft.';
+          }
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _error = 'Error: $e';
+        });
+      }
+    }
+  }
+
+  Future<void> _sendEmail() async {
+    if (_emailDraft == null || !_emailDraft!.isSuccess) return;
+    
+    final subject = Uri.encodeComponent(_emailDraft!.subject ?? '');
+    final body = Uri.encodeComponent(_emailDraft!.body ?? '');
+    final mailtoUrl = Uri.parse('mailto:?subject=$subject&body=$body');
+    
+    try {
+      if (await canLaunchUrl(mailtoUrl)) {
+        await launchUrl(mailtoUrl);
+        if (mounted) {
+          Navigator.pop(context);
+        }
+      } else {
+        // Fallback: copy to clipboard if email client not available
+        _copyToClipboard();
+        if (mounted) {
+          Navigator.pop(context);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Row(
+                children: [
+                  Icon(Icons.info, color: Colors.white),
+                  SizedBox(width: 8),
+                  Expanded(child: Text('No email app found. Email copied to clipboard!')),
+                ],
+              ),
+              backgroundColor: const Color(0xFFF59E0B),
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      // Error handling - copy to clipboard as fallback
+      _copyToClipboard();
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Row(
+              children: [
+                Icon(Icons.warning, color: Colors.white),
+                SizedBox(width: 8),
+                Expanded(child: Text('Could not open email app. Copied to clipboard!')),
+              ],
+            ),
+            backgroundColor: const Color(0xFFF59E0B),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+      }
+    }
+  }
+
+  void _copyToClipboard() {
+    if (_emailDraft == null || !_emailDraft!.isSuccess) return;
+    
+    final text = 'Subject: ${_emailDraft!.subject}\n\n${_emailDraft!.body}';
+    Clipboard.setData(ClipboardData(text: text));
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Row(
+          children: [
+            Icon(Icons.copy, color: Colors.white),
+            SizedBox(width: 8),
+            Text('Email copied to clipboard'),
+          ],
+        ),
+        backgroundColor: const Color(0xFF6366F1),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.9,
+      minChildSize: 0.5,
+      maxChildSize: 0.95,
+      builder: (context, scrollController) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            children: [
+              // Handle bar
+              Container(
+                margin: const EdgeInsets.only(top: 12),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              // Header
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF059669), Color(0xFF10B981)],
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(Icons.mail_outline, color: Colors.white, size: 24),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Email Draft',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF1E3A5F),
+                            ),
+                          ),
+                          Text(
+                            'For ${widget.clientName}',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: Colors.grey,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(),
+              // Content
+              Expanded(
+                child: _isLoading
+                    ? _buildLoadingState()
+                    : _error != null
+                        ? _buildErrorState()
+                        : _buildContent(scrollController),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildLoadingState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const CircularProgressIndicator(
+            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF10B981)),
+          ),
+          const SizedBox(height: 20),
+          Text(
+            'Generating email draft...',
+            style: TextStyle(
+              fontSize: 16,
+              color: Colors.grey.shade600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'This may take a few seconds',
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey.shade400,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.error_outline,
+              size: 64,
+              color: Colors.grey.shade400,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              _error ?? 'Something went wrong',
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey.shade600,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: _generateEmailDraft,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Try Again'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF10B981),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildContent(ScrollController scrollController) {
+    final draft = _emailDraft!;
+
+    return Column(
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            controller: scrollController,
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Tone Badge
+                if (draft.tone != null) ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF6366F1).withAlpha(26),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.style,
+                          size: 16,
+                          color: const Color(0xFF6366F1),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Tone: ${draft.tone!.substring(0, 1).toUpperCase()}${draft.tone!.substring(1)}',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF6366F1),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+
+                // Subject
+                _buildEmailSection(
+                  icon: Icons.subject,
+                  iconColor: const Color(0xFF1E3A5F),
+                  title: 'Subject',
+                  content: draft.subject ?? '',
+                  isSubject: true,
+                ),
+                const SizedBox(height: 16),
+
+                // Body
+                _buildEmailSection(
+                  icon: Icons.article_outlined,
+                  iconColor: const Color(0xFF059669),
+                  title: 'Body',
+                  content: draft.body ?? '',
+                ),
+                const SizedBox(height: 16),
+
+                // Suggested Attachments
+                if (draft.suggestedAttachments.isNotEmpty) ...[
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF5F7FA),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 32,
+                              height: 32,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF59E0B).withAlpha(26),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(Icons.attach_file, color: Color(0xFFF59E0B), size: 18),
+                            ),
+                            const SizedBox(width: 10),
+                            const Text(
+                              'Suggested Attachments',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF1E3A5F),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        ...draft.suggestedAttachments.map((attachment) => Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 6,
+                                height: 6,
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFFF59E0B),
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  attachment,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.grey.shade700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+
+        // Bottom Action Buttons
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withAlpha(13),
+                blurRadius: 10,
+                offset: const Offset(0, -4),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _copyToClipboard,
+                  icon: const Icon(Icons.copy, size: 18),
+                  label: const Text('Copy'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF1E3A5F),
+                    side: const BorderSide(color: Color(0xFF1E3A5F)),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 2,
+                child: ElevatedButton.icon(
+                  onPressed: _sendEmail,
+                  icon: const Icon(Icons.send, size: 18),
+                  label: const Text('Send Email'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF10B981),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEmailSection({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String content,
+    bool isSubject = false,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withAlpha(8),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: iconColor.withAlpha(26),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(icon, color: iconColor, size: 18),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1E3A5F),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            content,
+            style: TextStyle(
+              fontSize: isSubject ? 16 : 14,
+              fontWeight: isSubject ? FontWeight.w600 : FontWeight.normal,
+              color: const Color(0xFF37474F),
+              height: 1.6,
+            ),
           ),
         ],
       ),

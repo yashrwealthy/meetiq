@@ -1,9 +1,12 @@
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../models/client_memory.dart';
+import '../models/client_overview.dart';
 import '../services/graphql_service.dart';
 import '../services/storage_service.dart';
 import '../services/upload_service.dart';
@@ -20,7 +23,7 @@ class ClientProfileScreen extends StatefulWidget {
 class _ClientProfileScreenState extends State<ClientProfileScreen> {
   final GraphQLService _graphQLService = GraphQLService();
   final StorageService _storageService = StorageService();
-  final UploadService _uploadService = UploadService(baseUrl: 'https://finger-tried-bugs-narrow.trycloudflare.com/v2');
+  final UploadService _uploadService = UploadService(baseUrl: 'http://127.0.01:8000/v2');
   UserService get _userService => Get.find<UserService>();
 
   UserProfile? _profile;
@@ -322,8 +325,14 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
           ),
           const SizedBox(height: 12),
 
-          // Start Meeting button
-          _buildStartMeetingCard(),
+          // Start Meeting and Upload Recording row
+          Row(
+            children: [
+              Expanded(child: _buildStartMeetingCard()),
+              const SizedBox(width: 12),
+              Expanded(child: _buildUploadRecordingCard()),
+            ],
+          ),
           const SizedBox(height: 12),
 
           // Voice Note and Past Meetings row
@@ -358,6 +367,10 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
               )),
             ],
           ),
+          const SizedBox(height: 12),
+
+          // About Client button - Risk Assessment for meeting preparation
+          _buildAboutClientButton(),
           const SizedBox(height: 16),
 
           // Client Overview card
@@ -535,12 +548,12 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
     return GestureDetector(
       onTap: () => context.go('/record'),
       child: Container(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: const Color(0xFF1E3A5F),
           borderRadius: BorderRadius.circular(16),
         ),
-        child: Row(
+        child: Column(
           children: [
             Container(
               width: 48,
@@ -555,32 +568,193 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
                 size: 28,
               ),
             ),
-            const SizedBox(width: 16),
-            const Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Start Meeting',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                  ),
-                ),
-                SizedBox(height: 4),
-                Text(
-                  'Record & generate summary',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.white70,
-                  ),
-                ),
-              ],
+            const SizedBox(height: 12),
+            const Text(
+              'Start Meeting',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Record live',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.white70,
+              ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildUploadRecordingCard() {
+    return GestureDetector(
+      onTap: _pickAndUploadRecording,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF00BFA5), Color(0xFF00897B)],
+          ),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(
+                Icons.upload_file,
+                color: Colors.white,
+                size: 28,
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Upload Recording',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'From device',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.white70,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickAndUploadRecording() async {
+    try {
+      // Pick audio file
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.audio,
+        allowMultiple: false,
+        withData: true,  // Get bytes for web support
+      );
+
+      if (result == null || result.files.isEmpty) {
+        return;  // User cancelled
+      }
+
+      final file = result.files.first;
+      final fileName = file.name;
+      final fileBytes = file.bytes;
+      final fileSize = file.size;
+      // On web, path is not available - only use it on native platforms
+      final filePath = kIsWeb ? null : file.path;
+
+      if (fileBytes == null && filePath == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Could not read the selected file'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Show loading indicator
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                ),
+                SizedBox(width: 12),
+                Text('Saving recording...'),
+              ],
+            ),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+
+      // Generate unique recording ID
+      final recordingId = DateTime.now().millisecondsSinceEpoch.toString();
+      final clientName = _profile?.name ?? 'Client';
+
+      // Create meeting metadata locally
+      await _storageService.createMeeting(
+        recordingId: recordingId,
+        clientName: clientName,
+      );
+
+      // Save the external audio file locally
+      await _storageService.saveExternalAudioFile(
+        recordingId: recordingId,
+        fileName: fileName,
+        filePath: filePath,
+        fileBytes: fileBytes,
+        fileSizeBytes: fileSize,
+      );
+
+      // Update status to pending (ready for upload/processing later)
+      await _storageService.updateMeetingStatus(recordingId, 'pending');
+
+      if (!mounted) return;
+
+      // Clear previous snackbar and show success
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle, color: Colors.white),
+              const SizedBox(width: 12),
+              Expanded(child: Text('Recording saved: $fileName')),
+            ],
+          ),
+          backgroundColor: const Color(0xFF10B981),
+          duration: const Duration(seconds: 3),
+          action: SnackBarAction(
+            label: 'VIEW',
+            textColor: Colors.white,
+            onPressed: () {
+              context.go('/recording/$recordingId');
+            },
+          ),
+        ),
+      );
+
+      // Refresh data to show new recording
+      _loadData();
+    } catch (e) {
+      debugPrint('Error picking file: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Widget _buildQuickActionCard({
@@ -641,6 +815,104 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildAboutClientButton() {
+    return GestureDetector(
+      onTap: () => _showAboutClientModal(),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+          ),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF6366F1).withValues(alpha: 0.3),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(
+                Icons.psychology,
+                color: Colors.white,
+                size: 26,
+              ),
+            ),
+            const SizedBox(width: 16),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'About Client',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  SizedBox(height: 2),
+                  Text(
+                    'Risk assessment & meeting prep',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.white70,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(
+              Icons.arrow_forward_ios,
+              color: Colors.white70,
+              size: 18,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showAboutClientModal() async {
+    final clientId = await _userService.getCurrentUserId();
+    if (clientId == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to get client ID'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    if (!mounted) return;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _ClientOverviewModal(
+        uploadService: _uploadService,
+        clientId: clientId,
+        clientName: _profile?.name ?? 'Client',
       ),
     );
   }
@@ -903,6 +1175,479 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Modal widget to display client overview/risk assessment
+class _ClientOverviewModal extends StatefulWidget {
+  final UploadService uploadService;
+  final String clientId;
+  final String clientName;
+
+  const _ClientOverviewModal({
+    required this.uploadService,
+    required this.clientId,
+    required this.clientName,
+  });
+
+  @override
+  State<_ClientOverviewModal> createState() => _ClientOverviewModalState();
+}
+
+class _ClientOverviewModalState extends State<_ClientOverviewModal> {
+  ClientOverview? _overview;
+  bool _isLoading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchClientOverview();
+  }
+
+  Future<void> _fetchClientOverview() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final overview = await widget.uploadService.fetchClientOverview(widget.clientId);
+      if (mounted) {
+        setState(() {
+          _overview = overview;
+          _isLoading = false;
+          if (overview == null) {
+            _error = 'Unable to fetch client overview. Please try again.';
+          }
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _error = 'Error: $e';
+        });
+      }
+    }
+  }
+
+  Color _getRiskColor(String riskAssessment) {
+    final lower = riskAssessment.toLowerCase();
+    if (lower.contains('aggressive')) {
+      return const Color(0xFFEF4444);
+    } else if (lower.contains('moderate')) {
+      return const Color(0xFFF59E0B);
+    } else if (lower.contains('conservative')) {
+      return const Color(0xFF10B981);
+    }
+    return const Color(0xFF6366F1);
+  }
+
+  IconData _getRiskIcon(String riskAssessment) {
+    final lower = riskAssessment.toLowerCase();
+    if (lower.contains('aggressive')) {
+      return Icons.trending_up;
+    } else if (lower.contains('moderate')) {
+      return Icons.swap_horiz;
+    } else if (lower.contains('conservative')) {
+      return Icons.shield;
+    }
+    return Icons.analytics;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.85,
+      minChildSize: 0.5,
+      maxChildSize: 0.95,
+      builder: (context, scrollController) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            children: [
+              // Handle bar
+              Container(
+                margin: const EdgeInsets.only(top: 12),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              // Header
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(Icons.psychology, color: Colors.white, size: 24),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'About ${widget.clientName}',
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF1E3A5F),
+                            ),
+                          ),
+                          const Text(
+                            'Risk Assessment & Meeting Prep',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.grey,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(),
+              // Content
+              Expanded(
+                child: _isLoading
+                    ? _buildLoadingState()
+                    : _error != null
+                        ? _buildErrorState()
+                        : _buildContent(scrollController),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildLoadingState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const CircularProgressIndicator(
+            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF6366F1)),
+          ),
+          const SizedBox(height: 20),
+          Text(
+            'Analyzing client profile...',
+            style: TextStyle(
+              fontSize: 16,
+              color: Colors.grey.shade600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'This may take a moment',
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey.shade400,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.error_outline,
+              size: 64,
+              color: Colors.grey.shade400,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              _error ?? 'Something went wrong',
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey.shade600,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: _fetchClientOverview,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Try Again'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF6366F1),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildContent(ScrollController scrollController) {
+    final overview = _overview!;
+    final riskColor = _getRiskColor(overview.riskAssessment);
+    final riskIcon = _getRiskIcon(overview.riskAssessment);
+
+    return SingleChildScrollView(
+      controller: scrollController,
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Risk Assessment Badge
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: riskColor.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: riskColor.withValues(alpha: 0.3)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: riskColor.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(riskIcon, color: riskColor, size: 26),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Risk Profile',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        overview.riskAssessment.split('.').first,
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: riskColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Summary Narrative
+          _buildSection(
+            icon: Icons.person_outline,
+            iconColor: const Color(0xFF1E3A5F),
+            title: 'Client Summary',
+            content: overview.summaryNarrative,
+          ),
+          const SizedBox(height: 16),
+
+          // Risk Assessment Details
+          _buildSection(
+            icon: Icons.analytics_outlined,
+            iconColor: riskColor,
+            title: 'Risk Assessment',
+            content: overview.riskAssessment,
+          ),
+          const SizedBox(height: 16),
+
+          // Pitch Preparation
+          _buildSection(
+            icon: Icons.lightbulb_outline,
+            iconColor: const Color(0xFFF59E0B),
+            title: 'Pitch Preparation',
+            content: overview.pitchPreparation,
+          ),
+          const SizedBox(height: 16),
+
+          // Discussion Topics
+          if (overview.discussionTopics.isNotEmpty) ...[
+            _buildSectionHeader(
+              icon: Icons.chat_bubble_outline,
+              iconColor: const Color(0xFF00BFA5),
+              title: 'Discussion Topics',
+            ),
+            const SizedBox(height: 12),
+            ...overview.discussionTopics.asMap().entries.map((entry) {
+              final index = entry.key;
+              final topic = entry.value;
+              return Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF5F7FA),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF00BFA5).withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Center(
+                        child: Text(
+                          '${index + 1}',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF00BFA5),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        topic,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          color: Color(0xFF37474F),
+                          height: 1.5,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
+          const SizedBox(height: 24),
+
+          // Last Meeting Date (if available)
+          if (overview.lastMeetingDate != null) ...[
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF5F7FA),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.calendar_today, color: Colors.grey.shade600, size: 20),
+                  const SizedBox(width: 12),
+                  Text(
+                    'Last Meeting: ${overview.lastMeetingDate}',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSection({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String content,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildSectionHeader(icon: icon, iconColor: iconColor, title: title),
+          const SizedBox(height: 12),
+          Text(
+            content,
+            style: const TextStyle(
+              fontSize: 14,
+              color: Color(0xFF37474F),
+              height: 1.6,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionHeader({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+  }) {
+    return Row(
+      children: [
+        Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: iconColor.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, color: iconColor, size: 18),
+        ),
+        const SizedBox(width: 10),
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF1E3A5F),
+          ),
+        ),
+      ],
     );
   }
 }
