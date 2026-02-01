@@ -47,8 +47,10 @@ async def upload_chunk_v2(
     file: UploadFile = File(...)
 ) -> ChunkUploadResponseV2:
     try:
+        safe_client_id = client_id.replace("-", "")
+
         # Save file to disk instantaneously
-        file_path = await save_chunk_to_disk(file, client_id, meeting_id, chunk_id)
+        file_path = await save_chunk_to_disk(file, safe_client_id, meeting_id, chunk_id)
         
         redis: ArqRedis = request.app.state.redis_pool
         
@@ -56,7 +58,7 @@ async def upload_chunk_v2(
         background_tasks.add_task(
             process_chunk_background,
             file_path,
-            client_id,
+            safe_client_id,
             meeting_id,
             chunk_id,
             total_chunks,
@@ -64,7 +66,7 @@ async def upload_chunk_v2(
         )
 
         # Check if job_id already exists (from previous chunks)
-        job_key = f"v2:meeting:{client_id}:{meeting_id}:job_id"
+        job_key = f"v2:meeting:{safe_client_id}:{meeting_id}:job_id"
         job_id_bytes = await redis.get(job_key)
         job_id = None
         if job_id_bytes:
@@ -88,8 +90,9 @@ async def ack_upload_v2(
     total_chunks: int = Query(...)
 ) -> UploadAckResponseV2:
     try:
+        safe_client_id = client_id.replace("-", "")
         redis: ArqRedis = request.app.state.redis_pool
-        key = f"v2:meeting:{client_id}:{meeting_id}:uploaded"
+        key = f"v2:meeting:{safe_client_id}:{meeting_id}:uploaded"
         uploaded_chunks = await redis.smembers(key)
         uploaded_ids = {int(x) for x in uploaded_chunks}
         
@@ -98,7 +101,7 @@ async def ack_upload_v2(
         
         job_id = None
         if status == "complete":
-            job_key = f"v2:meeting:{client_id}:{meeting_id}:job_id"
+            job_key = f"v2:meeting:{safe_client_id}:{meeting_id}:job_id"
             job_id_bytes = await redis.get(job_key)
             if job_id_bytes:
                 job_id = job_id_bytes.decode('utf-8') if isinstance(job_id_bytes, bytes) else job_id_bytes
@@ -203,6 +206,7 @@ async def get_client_memory_v2(
     client_id: str = Query(...)
 ) -> ClientMemory:
     try:
+        client_id = client_id.replace("-", "")
         storage = StorageService()
         memory = storage.load_client_memory(client_id)
         return memory
