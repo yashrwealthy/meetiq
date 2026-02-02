@@ -43,43 +43,71 @@ async def dispatch_processing_task_v2(ctx: Dict[str, Any], client_id: str, meeti
         processed_key = f"v2:meeting:{client_id}:{meeting_id}:processed"
         await redis.set(processed_key, 0)
         
-        for i in range(total_chunks):
-            # Check for multiple audio formats since Gemini supports webm, mp3, aac, wav, etc.
-            if storage.use_s3:
-                # Try to find the chunk with any supported extension
-                possible_extensions = ['.webm', '.aac', '.mp3', '.wav']
-                file_path = None
+        chunk_offset = 0
+        
+        # Prepare a map of chunk_index -> file_path
+        chunk_map = {}
+
+        if storage.use_s3:
+            # Robust S3 file discovery
+            prefix = f"uploads/{client_id}/{meeting_id}/"
+            try:
+                response = storage.s3_client.list_objects_v2(Bucket=storage.bucket_name, Prefix=prefix)
+                s3_indices = []
                 
+                if 'Contents' in response:
+                    for obj in response['Contents']:
+                        key = obj['Key']
+                        filename = os.path.basename(key)
+                        # Expecting chunk_N.ext
+                        if filename.startswith("chunk_"):
+                            import re
+                            match = re.search(r'chunk_(\d+)', filename)
+                            if match:
+                                c_idx = int(match.group(1))
+                                s3_indices.append(c_idx)
+                                chunk_map[c_idx] = f"s3://{storage.bucket_name}/{key}"
+                
+                if s3_indices:
+                    chunk_offset = min(s3_indices)
+                    print(f"[v2] Detected chunk offset {chunk_offset} from S3 files: {sorted(s3_indices)}")
+                else:
+                    print(f"[v2] Warning: No chunks found in S3 at {prefix}")
+
+            except Exception as e:
+                print(f"[v2] Error listing S3 objects: {e}")
+        else:
+            # Local discovery
+            possible_extensions = ['.webm', '.aac', '.mp3', '.wav', '.m4a']
+            
+            # Check for chunks 0 to total_chunks+1 just to be safe finding the first one
+            found_indices = []
+            
+            for i in range(total_chunks + 2):
                 for ext in possible_extensions:
-                    potential_key = f"uploads/{client_id}/{meeting_id}/chunk_{i}{ext}"
-                    try:
-                        storage.s3_client.head_object(Bucket=storage.bucket_name, Key=potential_key)
-                        file_path = f"s3://{storage.bucket_name}/{potential_key}"
+                    f_path = base_dir / f"chunk_{i}{ext}"
+                    if f_path.exists():
+                        found_indices.append(i)
+                        chunk_map[i] = str(f_path)
                         break
-                    except:
-                        continue
-                
-                if not file_path:
-                    # Default to .webm if nothing found
-                    file_path = f"s3://{storage.bucket_name}/uploads/{client_id}/{meeting_id}/chunk_{i}.webm"
-            else:
-                # Local storage - check what file exists
-                possible_files = [
-                    base_dir / f"chunk_{i}.webm",
-                    base_dir / f"chunk_{i}.aac",
-                    base_dir / f"chunk_{i}.mp3",
-                    base_dir / f"chunk_{i}.wav"
-                ]
-                
-                file_path = None
-                for pf in possible_files:
-                    if pf.exists():
-                        file_path = str(pf)
-                        break
-                
-                if not file_path:
-                    # Default to .webm
-                    file_path = str(base_dir / f"chunk_{i}.webm")
+            
+            if found_indices:
+                chunk_offset = min(found_indices)
+                print(f"[v2] Detected chunk offset {chunk_offset} from local files: {sorted(found_indices)}")
+
+
+        for i in range(total_chunks):
+            current_idx = i + chunk_offset
+            
+            file_path = chunk_map.get(current_idx)
+            
+            if not file_path:
+                # Fallback / Assumption if scan failed or file missing
+                print(f"[v2] Chunk {current_idx} (sequence {i}) missing from map. Using default .webm fallback.")
+                if storage.use_s3:
+                    file_path = f"s3://{storage.bucket_name}/uploads/{client_id}/{meeting_id}/chunk_{current_idx}.webm"
+                else:
+                    file_path = str(base_dir / f"chunk_{current_idx}.webm")
 
             await redis.enqueue_job(
                 'transcribe_chunk_task_v2',
