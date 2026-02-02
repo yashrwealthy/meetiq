@@ -32,6 +32,12 @@ class UploadAckResponseV2(BaseModel):
     status: str
     job_id: Optional[str] = None
 
+class RetriggerResponseV2(BaseModel):
+    client_id: str
+    meeting_id: str
+    status: str
+    job_id: str
+
 router = APIRouter(prefix="/v2/meetings", tags=["meetings-v2"])
 
 from services.audio_service import save_chunk_to_disk, process_chunk_background
@@ -212,3 +218,40 @@ async def get_client_memory_v2(
         return memory
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/retrigger", response_model=RetriggerResponseV2)
+async def retrigger_job_v2(
+    request: Request,
+    client_id: str = Form(...),
+    meeting_id: str = Form(...),
+    total_chunks: int = Form(...)
+) -> RetriggerResponseV2:
+    try:
+        redis: ArqRedis = request.app.state.redis_pool
+        safe_client_id = client_id.replace("-", "")
+        
+        # Generate merge job_id
+        merge_job_id = f"v2-merge-{client_id}-{meeting_id}"
+        
+        # Save job_id
+        job_key = f"v2:meeting:{safe_client_id}:{meeting_id}:job_id"
+        await redis.set(job_key, merge_job_id)
+        
+        # Enqueue dispatch task
+        await redis.enqueue_job(
+            'dispatch_processing_task_v2',
+            safe_client_id,
+            meeting_id,
+            total_chunks,
+            _queue_name='arq:queue:v2'
+        )
+        
+        return RetriggerResponseV2(
+            client_id=client_id,
+            meeting_id=meeting_id,
+            status="retriggered",
+            job_id=merge_job_id
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
